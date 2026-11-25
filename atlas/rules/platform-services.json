@@ -1,0 +1,140 @@
+{
+  "id": "platform-services",
+  "title": "외부·기기 서비스 사용 흔적 (어느 제품에나 있을 만한 것만. 제품 전용 서비스는 작업 공간의 rules/ 에 둔다)",
+  "rules": [
+    {
+      "id": "CoreData",
+      "type": "service",
+      "sys": "device",
+      "name": "Core Data",
+      "desc": "iOS 기기 안의 로컬 DB.",
+      "code": {
+        "swift": "\\bNS(Persistent\\w*Container|ManagedObject\\w*|FetchRequest|EntityDescription)\\b"
+      }
+    },
+    {
+      "id": "AppGroup",
+      "type": "service",
+      "sys": "device",
+      "name": "App Group 공유 저장소",
+      "desc": "앱과 확장·위젯이 함께 읽고 쓰는 공유 컨테이너.",
+      "code": {
+        "swift": "suiteName|forSecurityApplicationGroupIdentifier|[aA]ppGroup"
+      }
+    },
+    {
+      "id": "UserDefaults",
+      "type": "service",
+      "sys": "device",
+      "name": "UserDefaults",
+      "desc": "iOS 설정·플래그 저장소.",
+      "code": {
+        "swift": "\\bUserDefaults\\b|@AppStorage"
+      }
+    },
+    {
+      "id": "Keychain",
+      "type": "service",
+      "sys": "device",
+      "name": "Keychain",
+      "desc": "토큰 같은 비밀 값을 보관하는 iOS 보안 저장소.",
+      "code": {
+        "swift": "\\bSecItem(Add|CopyMatching|Update|Delete)\\b|\\bkSecClass\\w*"
+      }
+    },
+    {
+      "id": "LocalNotifications",
+      "type": "service",
+      "sys": "device",
+      "name": "로컬 알림",
+      "desc": "OS 알림 센터에 알림을 예약·표시한다.",
+      "code": {
+        "swift": "\\bUN(UserNotificationCenter|MutableNotificationContent|NotificationRequest|\\w*NotificationTrigger)\\b",
+        "kotlin": "\\bNotification(ManagerCompat|Compat|Manager|Channel)\\b|\\bWorkManager\\b|\\bAlarmManager\\b"
+      }
+    },
+    {
+      "id": "HomeWidget",
+      "type": "service",
+      "sys": "device",
+      "name": "홈 화면 위젯",
+      "desc": "홈 화면 위젯과 그 타임라인.",
+      "code": {
+        "swift": "\\bWidgetCenter\\b|\\bTimelineProvider\\b|\\bStaticConfiguration\\b",
+        "kotlin": "\\bAppWidget(Provider|Manager)\\b|\\bGlanceAppWidget\\w*\\b"
+      }
+    },
+    {
+      "id": "WebView",
+      "type": "service",
+      "sys": "device",
+      "name": "인앱 웹뷰",
+      "desc": "앱 안에서 웹 페이지를 여는 웹뷰.",
+      "code": {
+        "swift": "\\bWK(WebView|Navigation\\w*|UserContentController|WebsiteDataStore)\\b",
+        "kotlin": "\\bWebView(Client)?\\b"
+      }
+    },
+    {
+      "id": "Clipboard",
+      "type": "service",
+      "sys": "device",
+      "name": "클립보드",
+      "desc": "시스템 클립보드 읽기·쓰기.",
+      "code": {
+        "swift": "\\b(UIPasteboard|NSPasteboard)\\b",
+        "kotlin": "\\bClipboardManager\\b|\\bClipData\\b"
+      }
+    },
+    {
+      "id": "AndroidStorage",
+      "type": "service",
+      "sys": "device",
+      "name": "Android 로컬 저장소",
+      "desc": "Android 기기 안의 SQLite · Preferences 저장소.",
+      "code": {
+        "kotlin": "\\b(RoomDatabase|SQLiteOpenHelper|SQLiteDatabase|SharedPreferences|getSharedPreferences|preferencesDataStore|DataStore)\\b"
+      }
+    },
+    {
+      "id": "CloudKit",
+      "type": "service",
+      "sys": "cloud",
+      "name": "iCloud (CloudKit)",
+      "desc": "iCloud 를 통한 기기 간 동기화 저장소.",
+      "code": {
+        "swift": "\\bCK(Container|Database|Record\\w*|Query\\w*|Modify\\w*|Fetch\\w*|Subscription\\w*|Error|AccountStatus|SyncEngine\\w*)\\b|\\bNSPersistentCloudKitContainer\\w*\\b"
+      }
+    },
+    {
+      "id": "AppleID",
+      "type": "service",
+      "sys": "cloud",
+      "name": "Apple ID 로그인",
+      "desc": "Sign in with Apple. 앱은 인증 시트를 띄우고 서버는 토큰을 검증한다.",
+      "code": {
+        "swift": "\\bASAuthorization\\w*\\b"
+      },
+      "text": "appleid\\.apple\\.com"
+    },
+    {
+      "id": "AdMob",
+      "type": "service",
+      "sys": "cloud",
+      "name": "Google AdMob",
+      "desc": "광고 SDK와 동의(UMP) 흐름.",
+      "code": {
+        "swift": "\\b(GAD\\w+|MobileAds|NativeAd|NativeAdLoader|AdLoader|NativeAdView|ConsentInformation|ConsentForm)\\b",
+        "kotlin": "\\b(MobileAds|AdLoader|NativeAd|NativeAdView|AdRequest|UserMessagingPlatform|ConsentInformation)\\b"
+      }
+    },
+    {
+      "id": "OpenAI",
+      "type": "service",
+      "sys": "cloud",
+      "name": "OpenAI API",
+      "desc": "LLM API 호출.",
+      "text": "api\\.openai\\.com"
+    }
+  ]
+}

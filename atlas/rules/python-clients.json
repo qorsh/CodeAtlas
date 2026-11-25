@@ -1,0 +1,31 @@
+{
+  "id": "python-clients",
+  "title": "requests · httpx · Kafka (Python)",
+  "langs": [
+    "python"
+  ],
+  "rules": [
+    {
+      "id": "http",
+      "type": "call",
+      "kind": "http",
+      "role": "consume",
+      "match": "(?:^|\\.)(requests|httpx|session|client|http)\\.(get|post|put|delete|patch)$",
+      "method": "$2"
+    },
+    {
+      "id": "kafka-consumer",
+      "type": "call",
+      "kind": "topic",
+      "role": "consume",
+      "match": "KafkaConsumer$"
+    },
+    {
+      "id": "kafka-produce",
+      "type": "call",
+      "kind": "topic",
+      "role": "provide",
+      "match": "(?i)producer\\.send$"
+    }
+  ]
+}

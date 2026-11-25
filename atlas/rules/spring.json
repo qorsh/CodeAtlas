@@ -1,0 +1,75 @@
+{
+  "id": "spring",
+  "title": "Spring MVC · Spring Data · RestTemplate · Kafka",
+  "langs": [
+    "java",
+    "kotlin"
+  ],
+  "rules": [
+    {
+      "id": "mvc",
+      "type": "annotation",
+      "kind": "http",
+      "role": "provide",
+      "names": {
+        "GetMapping": "GET",
+        "PostMapping": "POST",
+        "PutMapping": "PUT",
+        "DeleteMapping": "DELETE",
+        "PatchMapping": "PATCH",
+        "RequestMapping": "*"
+      },
+      "prefix": {
+        "names": [
+          "RequestMapping"
+        ]
+      },
+      "unit_kind": "controller"
+    },
+    {
+      "id": "rest-client",
+      "type": "call",
+      "kind": "http",
+      "role": "consume",
+      "match": "(?i)(?:^|\\.)\\w*(?:rest|http|web)\\w*\\.(getForObject|getForEntity|postForObject|postForEntity|put|delete|patchForObject)$",
+      "method_group": 1,
+      "method_map": {
+        "getForObject": "GET",
+        "getForEntity": "GET",
+        "postForObject": "POST",
+        "postForEntity": "POST",
+        "put": "PUT",
+        "delete": "DELETE",
+        "patchForObject": "PATCH"
+      }
+    },
+    {
+      "id": "data-repository",
+      "type": "text",
+      "kind": "db",
+      "role": "consume",
+      "regex": "extends\\s+(?:Jpa|Crud|PagingAndSorting|Mongo|Reactive\\w*)Repository\\s*<\\s*(\\w+)",
+      "key": "$1",
+      "op": "rw"
+    },
+    {
+      "id": "kafka-listener",
+      "type": "annotation",
+      "kind": "topic",
+      "role": "consume",
+      "names": {
+        "KafkaListener": "-"
+      },
+      "path": [
+        "topics"
+      ]
+    },
+    {
+      "id": "kafka-send",
+      "type": "call",
+      "kind": "topic",
+      "role": "provide",
+      "match": "(?i)kafka\\w*\\.send$"
+    }
+  ]
+}

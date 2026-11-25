@@ -1,0 +1,15 @@
+{
+  "id": "client-path-arg",
+  "title": "경로 조각을 인자로 넘기는 클라이언트 (프레임워크 없음)",
+  "langs": [
+    "swift"
+  ],
+  "auto": false,
+  "rules": [
+    {
+      "id": "h",
+      "type": "heuristic",
+      "name": "path-arg"
+    }
+  ]
+}

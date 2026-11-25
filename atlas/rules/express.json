@@ -1,0 +1,20 @@
+{
+  "id": "express",
+  "title": "Express 라우터",
+  "langs": [
+    "ts",
+    "js"
+  ],
+  "rules": [
+    {
+      "id": "routes",
+      "type": "call",
+      "kind": "http",
+      "role": "provide",
+      "match": "^(app|router|\\w*[rR]outer)\\.(get|post|put|patch|delete)$",
+      "method": "$2",
+      "lit": "^/",
+      "unit_kind": "controller"
+    }
+  ]
+}

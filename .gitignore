@@ -221,3 +221,17 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ───── Code Atlas ─────
+# 분석 대상 코드에서 나온 것은 이 저장소에 넣지 않는다: 분석 결과, 설정(저장소 주소·경로·호스트), 캐시,
+# 사람이 쓴 설명·예시 문의, 화면 캡처. 작업 공간은 workspaces/<이름>/ 아래에 두면 통째로 제외된다.
+/workspaces/
+atlas.config.json
+atlas-data.json
+atlas-manifest.json
+atlas-notes.json
+atlas-store/
+/site/
+/screens/
+.venv/
+.DS_Store

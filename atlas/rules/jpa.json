@@ -1,0 +1,21 @@
+{
+  "id": "jpa",
+  "title": "JPA 엔티티 → 테이블",
+  "langs": [
+    "java",
+    "kotlin"
+  ],
+  "rules": [
+    {
+      "id": "entity",
+      "type": "unit-annotation",
+      "names": [
+        "Entity"
+      ],
+      "name_from": [
+        "Table"
+      ],
+      "unit_kind": "model"
+    }
+  ]
+}

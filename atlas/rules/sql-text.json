@@ -1,0 +1,27 @@
+{
+  "id": "sql-text",
+  "title": "코드 속 SQL 문장의 테이블 이름",
+  "langs": [
+    "ts",
+    "js"
+  ],
+  "rules": [
+    {
+      "id": "quoted",
+      "type": "text",
+      "kind": "db",
+      "role": "consume",
+      "regex": "\\b(FROM|INTO|UPDATE|JOIN)\\s+\"([A-Z]\\w+)\"",
+      "key": "$2",
+      "style": "sql",
+      "op": {
+        "group": 1,
+        "read": [
+          "FROM",
+          "JOIN"
+        ],
+        "unless_before": "DELETE"
+      }
+    }
+  ]
+}

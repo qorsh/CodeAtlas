@@ -1,0 +1,29 @@
+{
+  "id": "js-clients",
+  "title": "axios · fetch",
+  "langs": [
+    "ts",
+    "js"
+  ],
+  "rules": [
+    {
+      "id": "axios",
+      "type": "call",
+      "kind": "http",
+      "role": "consume",
+      "match": "(?:^|\\.)(axios|api|http|client|instance)\\.(get|post|put|patch|delete)$",
+      "method": "$2",
+      "lit": "^(/|https?://)"
+    },
+    {
+      "id": "fetch",
+      "type": "call",
+      "kind": "http",
+      "role": "consume",
+      "match": "^fetch$",
+      "method_near": "method:\\s*[\\'\"](\\w+)[\\'\"]",
+      "default_method": "GET",
+      "lit": "^(/|https?://)"
+    }
+  ]
+}

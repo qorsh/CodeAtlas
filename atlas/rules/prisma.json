@@ -1,0 +1,28 @@
+{
+  "id": "prisma",
+  "title": "Prisma 클라이언트 호출",
+  "langs": [
+    "ts",
+    "js"
+  ],
+  "rules": [
+    {
+      "id": "client",
+      "type": "code",
+      "kind": "db",
+      "role": "consume",
+      "regex": "\\b(?:prisma|tx|db|client|transaction)\\s*\\.\\s*([a-z]\\w*)\\s*\\.\\s*([a-z]\\w*)",
+      "key": "$1",
+      "style": "prisma",
+      "op": {
+        "group": 2,
+        "write_prefix": [
+          "create",
+          "update",
+          "upsert",
+          "delete"
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "id": "retrofit",
+  "title": "Retrofit 인터페이스",
+  "langs": [
+    "java",
+    "kotlin"
+  ],
+  "rules": [
+    {
+      "id": "api",
+      "type": "annotation",
+      "kind": "http",
+      "role": "consume",
+      "names": {
+        "GET": "GET",
+        "POST": "POST",
+        "PUT": "PUT",
+        "DELETE": "DELETE",
+        "PATCH": "PATCH"
+      },
+      "require_path": true,
+      "unit_kind": "client"
+    }
+  ]
+}

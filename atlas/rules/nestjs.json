@@ -1,0 +1,31 @@
+{
+  "id": "nestjs",
+  "title": "NestJS 컨트롤러",
+  "langs": [
+    "ts"
+  ],
+  "rules": [
+    {
+      "id": "routes",
+      "type": "annotation",
+      "kind": "http",
+      "role": "provide",
+      "names": {
+        "Get": "GET",
+        "Post": "POST",
+        "Put": "PUT",
+        "Patch": "PATCH",
+        "Delete": "DELETE",
+        "All": "ALL"
+      },
+      "path": "pos0",
+      "prefix": {
+        "names": [
+          "Controller"
+        ],
+        "required": true
+      },
+      "unit_kind": "controller"
+    }
+  ]
+}

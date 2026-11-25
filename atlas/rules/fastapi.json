@@ -1,0 +1,31 @@
+{
+  "id": "fastapi",
+  "title": "FastAPI · Flask 라우트",
+  "langs": [
+    "python"
+  ],
+  "rules": [
+    {
+      "id": "fastapi",
+      "type": "annotation",
+      "kind": "http",
+      "role": "provide",
+      "match": "^\\w+\\.(get|post|put|delete|patch)$",
+      "method": "$1",
+      "prefix_call": {
+        "match": "APIRouter$",
+        "kw": "prefix"
+      },
+      "unit_kind": "controller"
+    },
+    {
+      "id": "flask",
+      "type": "annotation",
+      "kind": "http",
+      "role": "provide",
+      "match": "^\\w+\\.(route)$",
+      "method": "*",
+      "unit_kind": "controller"
+    }
+  ]
+}

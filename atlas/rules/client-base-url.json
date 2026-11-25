@@ -1,0 +1,16 @@
+{
+  "id": "client-base-url",
+  "title": "기준 주소에 경로를 붙인 문자열 (프레임워크 없음)",
+  "langs": [
+    "kotlin",
+    "java"
+  ],
+  "auto": false,
+  "rules": [
+    {
+      "id": "h",
+      "type": "heuristic",
+      "name": "base-url"
+    }
+  ]
+}

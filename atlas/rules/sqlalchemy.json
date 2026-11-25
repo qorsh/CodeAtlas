@@ -1,0 +1,30 @@
+{
+  "id": "sqlalchemy",
+  "title": "SQLAlchemy 모델과 세션",
+  "langs": [
+    "python"
+  ],
+  "rules": [
+    {
+      "id": "table",
+      "type": "unit-text",
+      "regex": "__tablename__\\s*=\\s*[\"\\'](\\w+)[\"\\']",
+      "unit_kind": "model"
+    },
+    {
+      "id": "session",
+      "type": "code",
+      "kind": "db",
+      "role": "consume",
+      "regex": "\\b(?:session|db)\\s*\\.\\s*(query|get|add|delete|merge)\\s*\\(\\s*([A-Z]\\w*)",
+      "key": "$2",
+      "op": {
+        "group": 1,
+        "read": [
+          "query",
+          "get"
+        ]
+      }
+    }
+  ]
+}
