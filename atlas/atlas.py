@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """코드 아틀라스 — 여러 저장소의 코드를 분석해 하나의 구성도 데이터로 만든다.
 
-  python3 atlas/atlas.py init <이름>                       설정 파일(atlas.config.json) 만들기
-  python3 atlas/atlas.py add <폴더 | git 주소> [--name N] [--branch B] [--dry-run]
-  python3 atlas/atlas.py sync [--no-fetch] [--pull] [--force]  바뀐 묶음만 다시 분석하고 결과를 교체
-  python3 atlas/atlas.py status                            소스별 기준 커밋과 마지막 결과
-  python3 atlas/atlas.py site <뷰어 html> <출력 폴더>          사내 웹 서버에 올릴 정적 파일 묶음 만들기
+  python3 atlas/atlas.py -w <이름> init                       작업 공간(workspaces/<이름>/) 만들기
+  python3 atlas/atlas.py -w <이름> add <폴더 | git 주소> [--name N] [--branch B] [--dry-run]
+  python3 atlas/atlas.py -w <이름> sync [--no-fetch] [--pull] [--force]   바뀐 묶음만 다시 분석하고 결과를 교체
+  python3 atlas/atlas.py -w <이름> status                     소스별 기준 커밋과 마지막 결과
+  python3 atlas/atlas.py -w <이름> open                       이 컴퓨터에서 지도 열기 (로컬 서버 + 브라우저)
+  python3 atlas/atlas.py -w <이름> site [뷰어 html] [출력 폴더]   사내 웹 서버에 올릴 정적 파일 묶음 만들기
+-w 대신 --config <설정 파일> 로 다른 위치의 작업 공간을 가리킬 수 있다.
 
 구조 (층마다 따로 늘릴 수 있다)
   langs/*.py     언어 어댑터: 문법만 안다. 유닛(클래스·파일)과 멤버(메서드)의 범위를 낸다.
@@ -664,6 +666,8 @@ def cmd_status(cfg, args):
 
 
 def cmd_site(cfg, args):
+    args.viewer = args.viewer or os.path.join(os.path.dirname(HERE), 'code-atlas.html')
+    args.out = args.out or os.path.join(cfg['_dir'], 'site')
     body = open(args.viewer, encoding='utf-8').read()
     os.makedirs(args.out, exist_ok=True)
     head = ('<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
@@ -678,25 +682,80 @@ def cmd_site(cfg, args):
     print(f'{args.out} 에 {", ".join(made)} 을 만들었습니다. 이 폴더를 사내 웹 서버에 올리면 됩니다.')
 
 
+def make_server(cfg, port=0):
+    """작업 공간의 지도를 보여 줄 로컬 서버. 이 컴퓨터(127.0.0.1)에서만 열리고, 데이터 파일은 작업 공간에서 바로 읽어 sync 결과가 곧장 보인다."""
+    import http.server
+    site, live = os.path.join(cfg['_dir'], 'site'), os.path.join(cfg['_dir'], cfg.get('out', '.'))
+
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *a, **k):
+            super().__init__(*a, directory=site, **k)
+
+        def translate_path(self, path):
+            name = path.split('?')[0].split('#')[0].lstrip('/')
+            if name in ('atlas-data.json', 'atlas-manifest.json', 'atlas-notes.json'):
+                return os.path.join(live, name)
+            return super().translate_path(path)
+
+        def end_headers(self):
+            self.send_header('Cache-Control', 'no-store')
+            super().end_headers()
+
+        def log_message(self, *a):
+            pass
+
+    httpd = http.server.ThreadingHTTPServer(('127.0.0.1', port), Handler)
+    return httpd, f'http://127.0.0.1:{httpd.server_address[1]}/'
+
+
+def cmd_open(cfg, args):
+    if not os.path.exists(os.path.join(cfg['_dir'], cfg.get('out', '.'), 'atlas-data.json')):
+        raise SystemExit('아직 분석 결과가 없습니다. 먼저 sync 를 실행하세요.')
+    args.viewer = args.out = None
+    cmd_site(cfg, args)
+    httpd, url = make_server(cfg, args.port)
+    print(f'{url} 에서 보여 주는 중입니다(이 컴퓨터에서만 열립니다). 끝내려면 Ctrl+C.')
+    if not args.no_browser:
+        import webbrowser
+        webbrowser.open(url)
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print('\n끝냈습니다.')
+    finally:
+        httpd.server_close()
+
+
 def main():
     use_project_venv()
     ap = argparse.ArgumentParser(description='코드 아틀라스')
-    ap.add_argument('--config', default='atlas.config.json')
+    ap.add_argument('--config', help='설정 파일 경로 (기본: 현재 폴더의 atlas.config.json)')
+    ap.add_argument('-w', '--workspace', metavar='이름', help='작업 공간 이름. 이 저장소의 workspaces/<이름>/atlas.config.json 을 쓴다')
     sub = ap.add_subparsers(dest='cmd', required=True)
-    p = sub.add_parser('init'); p.add_argument('name')
+    p = sub.add_parser('init'); p.add_argument('name', nargs='?')
     p = sub.add_parser('add'); p.add_argument('target'); p.add_argument('--name'); p.add_argument('--branch'); p.add_argument('--dry-run', action='store_true')
     p = sub.add_parser('sync'); p.add_argument('--no-fetch', action='store_true'); p.add_argument('--pull', action='store_true'); p.add_argument('--force', action='store_true')
     sub.add_parser('status')
-    p = sub.add_parser('site'); p.add_argument('viewer'); p.add_argument('out')
+    p = sub.add_parser('site'); p.add_argument('viewer', nargs='?'); p.add_argument('out', nargs='?')
+    p = sub.add_parser('open'); p.add_argument('--port', type=int, default=0); p.add_argument('--no-browser', action='store_true')
     args = ap.parse_args()
+    if args.workspace and not args.config:
+        args.config = os.path.join(os.path.dirname(HERE), 'workspaces', args.workspace, 'atlas.config.json')
+    args.config = args.config or 'atlas.config.json'
     if args.cmd == 'init':
+        args.name = args.name or args.workspace
+        if not args.name:
+            raise SystemExit('이름을 주세요: -w <이름> init 또는 init <이름>')
+        os.makedirs(os.path.dirname(os.path.abspath(args.config)), exist_ok=True)
         if os.path.exists(args.config):
             raise SystemExit(f'{args.config} 가 이미 있습니다.')
         json.dump(dict(name=args.name, out='.', store='atlas-store', api_hosts=[], sources=[], systems=[], link={}), open(args.config, 'w', encoding='utf-8'), ensure_ascii=False, indent=2)
         print(f'{args.config} 를 만들었습니다. add 로 소스를 추가하세요.')
         return
+    if not os.path.exists(args.config):
+        raise SystemExit(f'{args.config} 가 없습니다. 먼저 init 을 실행하세요 (예: python3 atlas/atlas.py -w <이름> init).')
     cfg = load_config(args.config)
-    {'add': cmd_add, 'sync': cmd_sync, 'status': cmd_status, 'site': cmd_site}[args.cmd](cfg, args)
+    {'add': cmd_add, 'sync': cmd_sync, 'status': cmd_status, 'site': cmd_site, 'open': cmd_open}[args.cmd](cfg, args)
 
 
 if __name__ == '__main__':

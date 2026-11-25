@@ -6,14 +6,15 @@
 ## 쓰는 법
 
 ```bash
-python3 atlas/atlas.py init <이름>              # atlas.config.json 만들기
-python3 atlas/atlas.py add <폴더 | git 주소>     # 소스 추가. 종류를 감지해 설정에 적는다 (--dry-run 으로 미리보기)
-python3 atlas/atlas.py sync                    # 바뀐 묶음만 다시 분석하고 결과 교체
-python3 atlas/atlas.py status                  # 소스별 기준 커밋, 마지막 결과
-python3 atlas/atlas.py site code-atlas.html site/   # 사내 웹 서버에 올릴 정적 파일 묶음
+python3 atlas/atlas.py -w <이름> init                   # 작업 공간 workspaces/<이름>/ 과 설정 파일 만들기
+python3 atlas/atlas.py -w <이름> add <폴더 | git 주소>   # 소스 추가. 종류를 감지해 설정에 적는다 (--dry-run 으로 미리보기)
+python3 atlas/atlas.py -w <이름> sync                   # 바뀐 묶음만 다시 분석하고 결과 교체
+python3 atlas/atlas.py -w <이름> status                 # 소스별 기준 커밋, 마지막 결과
+python3 atlas/atlas.py -w <이름> open                   # 이 컴퓨터에서만 열리는 서버를 띄우고 브라우저로 연다
+python3 atlas/atlas.py -w <이름> site                   # 사내 웹 서버에 올릴 정적 파일 묶음 (workspaces/<이름>/site/)
 ```
 
-설정 파일은 기본으로 현재 폴더의 `atlas.config.json` 이다. 분석 대상마다 작업 공간 폴더를 따로 두고 `--config workspaces/<이름>/atlas.config.json` 으로 가리키는 것을 권한다(`workspaces/` 는 git 에서 제외돼 있다). 결과와 캐시는 설정 파일이 있는 폴더에 생긴다.
+`-w <이름>` 은 이 저장소의 `workspaces/<이름>/atlas.config.json` 을 가리킨다(`workspaces/` 는 git 에서 제외돼 있다). 작업 공간을 저장소 밖에 두려면 `--config <설정 파일 경로>` 를 쓴다. 결과와 캐시는 설정 파일이 있는 폴더에 생긴다.
 
 `sync` 가 만드는 것은 `atlas-data.json`(구성도 데이터)과 `atlas-manifest.json`(버전, 소스별 커밋, 지난 버전 대비 바뀐 유닛)이다.
 
@@ -72,6 +73,7 @@ python3 atlas/atlas.py site code-atlas.html site/   # 사내 웹 서버에 올�
 python3 -m venv .venv && .venv/bin/pip install -r requirements-parsers.txt
 ```
 
+- 파이썬 3.10 이상에서는 tree-sitter 0.27 묶음이, 3.9 에서는 그 판을 지원하는 마지막 묶음(0.23)이 깔린다. 두 묶음 모두 시험용 프로젝트에서 같은 결과를 낸다(3.9, 3.13, 3.14 에서 확인).
 - 저장소의 `.venv` 에 tree-sitter 가 있으면 `atlas.py` 는 그 파이썬으로 스스로 다시 실행한다. 누가 어떤 파이썬으로 부르든 같은 파서로 분석돼야 결과와 캐시가 흔들리지 않기 때문이다(`ATLAS_NO_VENV=1` 로 끈다).
 - 문법은 PyPI 의 언어별 패키지(`tree-sitter-java` 등)에 들어 있다. 실행 중에 내려받는 것이 없어 사내 PyPI 미러만으로 설치할 수 있다.
 - 설정의 `"parser"`: `"auto"`(기본. 문법이 있으면 tree-sitter, 없으면 내장), `"builtin"`(항상 내장), `"tree-sitter"`(문법이 없으면 멈춘다).
@@ -144,7 +146,7 @@ SITTER_SPECS['go'] = dict(
 - **접근 토큰은 설정에 적지 않는다.** git 의 자격 증명 도우미나 배포 키를 실행 환경에 둔다. 비밀번호를 물으며 멈추지 않도록 프롬프트는 꺼 둔다.
 - **결과 교체는 한 번에**: 임시 파일에 다 쓴 뒤 이름을 바꾼다. 목록표를 마지막에 쓰고, 열려 있는 화면은 1분마다 그것을 보고 "새 버전이 있습니다"를 띄운다.
 - **캐시**: 묶음마다 엔진·규칙 버전, 설정, 파일 내용의 해시를 기록한다. 하나라도 바뀐 묶음만 다시 분석하고, 연결 단계는 저장된 접점만으로 다시 맞춘다.
-- **접근 제어**는 이 도구가 하지 않는다. `site` 로 만든 폴더를 사내 로그인 뒤에 올린다.
+- **접근 제어**는 이 도구가 하지 않는다. `site` 로 만든 폴더를 사내 로그인 뒤에 올린다. 혼자 볼 때는 `open` 을 쓴다(127.0.0.1 에서만 열린다). `python3 -m http.server` 는 기본으로 같은 네트워크의 다른 컴퓨터에도 열리므로 쓰지 않는다.
 - **분석 대상의 내용은 도구 저장소에 넣지 않는다.** 설정·결과·캐시·메모·제품 전용 규칙은 작업 공간에만 두고, 커밋 전에 `python3 tests/leak_check.py` 로 확인한다.
 
 ## 알아 둘 한계
@@ -160,10 +162,9 @@ SITTER_SPECS['go'] = dict(
 `fixtures/shop/` 은 Java Spring 서버, Python FastAPI 서비스, Go 재고 서비스, React 웹, Kotlin Retrofit 앱으로 이루어진 작은 시험용 프로젝트다.
 
 ```bash
-mkdir -p workspaces/shop
-python3 atlas/atlas.py --config workspaces/shop/atlas.config.json init shop
-python3 atlas/atlas.py --config workspaces/shop/atlas.config.json add fixtures/shop
-python3 atlas/atlas.py --config workspaces/shop/atlas.config.json sync      # tree-sitter 가 있으면 http 6 · db 2 · msg 1 · ext 1, 없으면 Go 를 건너뛰고 http 3 · db 2 · msg 1
+python3 atlas/atlas.py -w shop init
+python3 atlas/atlas.py -w shop add fixtures/shop
+python3 atlas/atlas.py -w shop sync      # tree-sitter 가 있으면 http 6 · db 2 · msg 1 · ext 1, 없으면 Go 를 건너뛰고 http 3 · db 2 · msg 1
 node tests/viewer-smoke.js code-atlas.html workspaces/shop                  # 그 결과로 화면이 끝까지 그려지는지
 .venv/bin/python tests/parser_parity.py java fixtures/shop/order-service    # 내장 파서와 tree-sitter 의 결과가 같은지 (차이 0건)
 .venv/bin/python tests/parser_parity.py python fixtures/shop/payment-service

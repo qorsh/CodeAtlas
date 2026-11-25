@@ -24,35 +24,45 @@
 
 ## 빨리 써 보기
 
-파이썬 3 만 있으면 된다(추가 설치 없음). 저장소에 들어 있는 시험용 프로젝트로 지도를 만들어 본다.
+git 과 파이썬 3.9 이상만 있으면 된다(맥 기본 파이썬으로 충분하고, 추가 설치는 없다). 저장소에 들어 있는 시험용 프로젝트로 지도를 만들어 본다.
 
 ```bash
-mkdir -p workspaces/shop
+python3 atlas/atlas.py -w shop init
 ```
 
 ```bash
-python3 atlas/atlas.py --config workspaces/shop/atlas.config.json init shop
+python3 atlas/atlas.py -w shop add fixtures/shop
 ```
 
 ```bash
-python3 atlas/atlas.py --config workspaces/shop/atlas.config.json add fixtures/shop
+python3 atlas/atlas.py -w shop sync
 ```
 
 ```bash
-python3 atlas/atlas.py --config workspaces/shop/atlas.config.json sync
+python3 atlas/atlas.py -w shop open
 ```
+
+마지막 명령이 브라우저를 연다. `sync` 출력의 연결 수가 `'http': 3`, `'db': 2`, `'msg': 1` 이면 정상이다. 이때 Go 로 된 재고 서비스는 "건너뜀"으로 나온다(아래 선택 설치를 하면 함께 분석돼 `'http': 6` 이 된다).
+
+## 내 프로젝트에 적용하기
+
+`-w <이름>` 은 작업 공간 `workspaces/<이름>/` 을 가리킨다. 제품 하나에 작업 공간 하나를 두고, 그 제품을 이루는 저장소를 하나씩 `add` 한다.
 
 ```bash
-python3 atlas/atlas.py --config workspaces/shop/atlas.config.json site code-atlas.html workspaces/shop/site
+python3 atlas/atlas.py -w myproduct init
+python3 atlas/atlas.py -w myproduct add ~/work/ios-app --dry-run     # 무엇을 알아보는지 미리보기 (설정을 바꾸지 않는다)
+python3 atlas/atlas.py -w myproduct add ~/work/ios-app               # 폴더 (읽기만 한다)
+python3 atlas/atlas.py -w myproduct add ~/work/server
+python3 atlas/atlas.py -w myproduct add git@host:team/admin-web.git  # git 주소 (작업 공간 안에 전용 복제본을 둔다)
+python3 atlas/atlas.py -w myproduct sync
+python3 atlas/atlas.py -w myproduct open
 ```
 
-```bash
-python3 -m http.server -d workspaces/shop/site 8000
-```
-
-브라우저에서 `http://localhost:8000` 을 연다. `sync` 출력의 연결 수가 `'http': 3`, `'db': 2`, `'msg': 1` 이면 정상이다. 이때 Go 로 된 재고 서비스는 "건너뜀"으로 나온다(아래 선택 설치를 하면 함께 분석돼 `'http': 6` 이 된다).
-
-자기 코드를 올릴 때는 `add` 에 폴더나 git 주소를 주면 된다. 시스템 종류(Xcode, Gradle, Nest, Next, Prisma, Spring, Python 등)를 감지해 설정에 적어 주므로, 이름과 루트만 손본 뒤 `sync` 한다. 이미 분석한 소스는 바뀐 묶음만 다시 분석하고, 새로 추가한 소스는 기존 접점(API, 테이블, 토픽)에 연결만 한다.
+- `add` 는 폴더를 훑어 시스템 종류(Xcode, Gradle, Nest, Next, Prisma, Spring, Python, Go 등)를 감지하고 `workspaces/myproduct/atlas.config.json` 에 적는다. 이름과 루트가 어색하면 그 파일을 고친다. 감지하지 못한 것은 [atlas/README.md](atlas/README.md) 의 설정 형식대로 직접 적는다.
+- 코드가 바뀌면 `sync` 만 다시 돌린다. 바뀐 묶음만 다시 분석하고, 나중에 추가한 소스는 기존 접점(API, 테이블, 토픽)에 연결만 한다. 폴더 소스는 읽기만 하므로 최신으로 당기는 것은 직접 하거나 `sync --pull` 을 쓴다.
+- `open` 은 이 컴퓨터(127.0.0.1)에서만 열리는 서버를 띄운다. 열어 둔 채 다른 터미널에서 `sync` 하면 화면에 새 버전 알림이 뜬다.
+- 여럿이 볼 곳에 올릴 때는 `site` 로 만든 `workspaces/myproduct/site/` 폴더를 사내 웹 서버(로그인 뒤)에 둔다.
+- `sync` 출력의 "호출자 없는 API" 가 많으면 그 제품이 쓰는 프레임워크의 규칙이 없다는 뜻이다. 규칙은 `workspaces/myproduct/rules/*.json` 에 더한다.
 
 ## 선택 설치: 정식 파서(tree-sitter)
 
