@@ -7,7 +7,14 @@
 - 클래스끼리의 호출뿐 아니라 **시스템을 넘는 연결**을 자동으로 잇는다: 앱이 부르는 API ↔ 서버 라우트, 코드 ↔ DB 테이블, 메시지 발행 ↔ 구독, 외부 서비스, 플랫폼 간 대응 구현.
 - 검색창에 문의를 그대로 적으면 관련 위치가 지도에 켜진다. 화면에 보이는 문구나 오류 코드로도 찾는다.
 - 유닛을 누르면 역할, 들어오고 나가는 곳, 메서드, 고쳤을 때 영향받는 범위를 보여 준다.
+- API 마다 **요청이 어디서 들어와 어떤 응답 코드로 나가는지** 보여 준다. 접속 로그를 얹으면 실제 요청·응답이 연결선을 따라 흐르고, 비정상 응답이 나온 곳은 붉은 네온으로 깜박인다.
 - 분석 결과에는 **코드 본문을 넣지 않는다.** 이름, 시그니처, 주석, 호출 관계, 코드 속 문자열(비밀 값처럼 보이는 것은 제외)만 담는다.
+
+![전체 보기: 시스템 사이로 요청과 응답이 흐르고, 비정상 응답이 나온 곳이 붉게 표시된다](docs/shop-overview.png)
+
+![API 메서드를 고른 화면: 실측 응답 코드와 그 응답을 내려주는 자리](docs/shop-response.png)
+
+위 그림은 저장소에 든 시험용 프로젝트(`fixtures/shop`)와 지어낸 접속 로그로 만든 것이다. `python3 tests/screenshot.py workspaces/shop <폴더>` 로 다시 찍는다.
 
 ## 구성
 
@@ -16,7 +23,7 @@
 | `code-atlas.html` | 지도 화면. 파일 하나로 된 뷰어이고, 옆에 놓인 `atlas-data.json` 을 읽는다. 어떤 제품의 내용도 들어 있지 않다 |
 | `atlas/` | 분석기. `atlas.py`(명령줄), `langs/`(언어 어댑터), `engine/`(공통 엔진), `rules/`(프레임워크 규칙 팩). 자세한 설명은 [atlas/README.md](atlas/README.md) |
 | `fixtures/shop/` | 시험용 가짜 프로젝트(Java Spring, Python FastAPI, Go net/http, React, Kotlin Retrofit) |
-| `tests/` | 뷰어 연기 시험, 파서 비교, 반출 검사 |
+| `tests/` | 뷰어 연기 시험, 실제 브라우저 화면 찍기, 파서 비교, 반출 검사 |
 | `requirements-parsers.txt` | 선택 설치(tree-sitter). 없어도 동작한다 |
 | `workspaces/` | 분석 대상별 작업 공간. **git 에서 제외된다** (아래 참고) |
 
@@ -63,6 +70,34 @@ python3 atlas/atlas.py -w myproduct open
 - `open` 은 이 컴퓨터(127.0.0.1)에서만 열리는 서버를 띄운다. 열어 둔 채 다른 터미널에서 `sync` 하면 화면에 새 버전 알림이 뜬다.
 - 여럿이 볼 곳에 올릴 때는 `site` 로 만든 `workspaces/myproduct/site/` 폴더를 사내 웹 서버(로그인 뒤)에 둔다.
 - `sync` 출력의 "호출자 없는 API" 가 많으면 그 제품이 쓰는 프레임워크의 규칙이 없다는 뜻이다. 규칙은 `workspaces/myproduct/rules/*.json` 에 더한다.
+
+## 요청·응답 흐름과 비정상 응답
+
+두 겹으로 보여 준다.
+
+**코드에서 읽은 것 (항상 보인다).** 어느 메서드가 어떤 HTTP 상태 코드를 내려주는지 분석 때 함께 뽑는다(`http.Error(w, …, http.StatusConflict)`, `HTTPException(status_code=404)`, `throw new NotFoundException()`, `res.status(500)` 같은 자리와 그 줄에 적힌 문구). API 메서드를 고르면 설명 패널에 "이 요청이 받을 수 있는 응답 코드와 그것을 내려주는 자리"가 호출 경로를 따라 모여 나오고, 지도에서는 오류 응답을 내려주는 자리가 붉게 깜박인다. 메서드 줄 오른쪽 끝의 붉은 표시는 그 메서드가 400 이상의 코드를 내려준다는 뜻이다.
+
+**접속 로그에서 온 실측 (로그를 줬을 때).** 로그의 `메서드 경로 상태코드` 를 분석해 둔 API 에 맞춰 라우트별 응답 코드 횟수를 만든다.
+
+```bash
+python3 atlas/atlas.py -w myproduct ingest /var/log/nginx/access.log
+```
+
+```bash
+tail -f /var/log/app/access.log | python3 atlas/atlas.py -w myproduct ingest - --follow
+```
+
+- 지도에서 요청은 부르는 쪽 → 서버로 가는 흰 점, 응답은 서버 → 부르는 쪽으로 돌아오는 네모로 흐른다(정상 초록, 비정상 빨강).
+- 비정상 응답(기본 400 이상, `--abnormal 500` 으로 바꾼다)이 나온 API 의 유닛은 **어느 배율에서도 붉은 네온으로 깜박이고**, 왼쪽 위 요약의 "비정상 응답 위치 보기"가 그곳들로 데려간다.
+- 형식은 알아서 맞춘다: JSON 한 줄(`method`·`path`·`status` 류의 키), nginx·Apache 기본 형식, `GET /x … 200` 꼴의 앱 로그. 그 밖의 형식은 `--regex '(?P<method>…) (?P<path>…) (?P<status>\d{3})'` 로 알려 준다. 게이트웨이가 붙인 경로 접두어는 `--strip-prefix /v1` 로 뗀다.
+- `--follow` 는 최근 5분 창을 3초마다 다시 적고, 열려 있는 화면은 10초 안에 따라온다. 지우려면 `ingest --clear`.
+- 로그에서 가져오는 것은 메서드, 경로, 상태 코드, 걸린 시간뿐이다. 쿼리 문자열·본문·사용자 정보는 읽지 않고, 결과 파일(`atlas-runtime.json`)에는 라우트별 횟수만 남는다. 이 파일도 작업 공간에 생기므로 git 에 들어가지 않는다.
+
+시험용 프로젝트로 보려면 다음을 실행한 뒤 `open` 한다.
+
+```bash
+python3 atlas/atlas.py -w shop ingest fixtures/shop/logs/access-nginx.txt
+```
 
 ## 선택 설치: 정식 파서(tree-sitter)
 
@@ -115,6 +150,7 @@ python3 tests/leak_check.py
 | 이동 · 확대 | 드래그 · 휠 또는 핀치 · `+` `-` · `0`(전체 보기) |
 | 검색 | `/` 또는 `Cmd/Ctrl+K` |
 | 추적 단계·검색 결과 넘기기 | 방향키 |
+| 응답 흐름 보기 | API 메서드를 누른다(오류 응답 자리가 붉게 깜박인다). 실측이 있으면 왼쪽 위 "비정상 응답 위치 보기" |
 | 연결 따라가기 | 유닛을 고른 뒤 `↑` `↓` 로 연결을 고르고 `→` 로 건너가기, `←` 로 돌아오기. 연결선을 직접 눌러도 된다 |
 | 선택 해제 | `Esc` |
 
@@ -124,7 +160,13 @@ python3 tests/leak_check.py
 node tests/viewer-smoke.js code-atlas.html workspaces/shop
 ```
 
-가짜 DOM 으로 뷰어를 띄워 모든 유닛·확대 단계·검색·규모 시험(×10)을 통과하는지 본다. 화면 모양은 실제 브라우저에서 확인한다.
+가짜 DOM 으로 뷰어를 띄워 모든 유닛·확대 단계·검색·응답 표시·규모 시험(×10)을 통과하는지, 좌표가 제대로 잡혔는지 본다.
+
+```bash
+python3 tests/screenshot.py workspaces/shop /tmp/atlas-shots
+```
+
+실제 브라우저(헤드리스 Chrome)로 화면을 찍는다. 화면을 고쳤으면 이 그림을 직접 열어 본다. 가짜 DOM 시험은 지도가 통째로 비는 문제를 잡지 못한 적이 있다.
 
 ```bash
 .venv/bin/python tests/parser_parity.py java fixtures/shop/order-service
@@ -137,7 +179,10 @@ node tests/viewer-smoke.js code-atlas.html workspaces/shop
 - 내장 파서는 주석·문자열 제거와 괄호·들여쓰기 구조에 기댄 근사 분석이다. Swift, Kotlin, TypeScript/JavaScript 는 아직 내장 파서로만 읽는다.
 - 어느 파서든 매크로, 리플렉션, 의존성 주입 설정처럼 문법에 드러나지 않는 연결은 놓친다.
 - 규칙 팩이 없는 프레임워크의 접점은 잡히지 않는다. `sync` 출력의 "호출자 없는 API" 수가 빠진 곳을 찾는 실마리다.
-- 실제 요청·응답 값(런타임 흐름)은 보여 주지 않는다. 코드에서 읽어 낸 구조만 보여 준다.
+- 실측은 접속 로그 수준이다. 어떤 API 가 어떤 코드로 응답했는지는 알지만, 서버 안의 어느 메서드에서 실패했는지는 로그에 없어서 코드에서 읽은 "그 코드를 내려주는 자리"로 좁혀 보여 준다. 요청 한 건을 시스템 사이로 따라가려면 분산 추적(OpenTelemetry 등) 기록이 필요한데 아직 읽지 못한다.
+- 같은 API 를 여러 클라이언트가 부르면 로그만으로는 누가 불렀는지 나눌 수 없어, 그 API 로 들어오는 연결선마다 같은 통행량을 그린다.
+- 코드에서 읽는 응답 코드는 규칙 팩이 아는 관용구만 잡는다. 예외 이름으로 어림한 코드(`OrderNotFoundException` → 404)는 `404?` 처럼 물음표를 붙인다.
+- 요청·응답의 본문 값은 다루지 않는다.
 
 ## 라이선스
 

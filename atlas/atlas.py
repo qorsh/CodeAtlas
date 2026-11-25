@@ -7,6 +7,7 @@
   python3 atlas/atlas.py -w <이름> status                     소스별 기준 커밋과 마지막 결과
   python3 atlas/atlas.py -w <이름> open                       이 컴퓨터에서 지도 열기 (로컬 서버 + 브라우저)
   python3 atlas/atlas.py -w <이름> site [뷰어 html] [출력 폴더]   사내 웹 서버에 올릴 정적 파일 묶음 만들기
+  python3 atlas/atlas.py -w <이름> ingest <접속 로그 | -> [--follow]   실제 요청·응답을 지도에 얹기 (비정상 응답은 붉게 깜박인다)
 -w 대신 --config <설정 파일> 로 다른 위치의 작업 공간을 가리킬 수 있다.
 
 구조 (층마다 따로 늘릴 수 있다)
@@ -31,7 +32,7 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ENGINE_PRE = ['engine/prelude.py', 'engine/text.py', 'engine/store.py']
-ENGINE_POST = ['engine/scan.py', 'engine/facts.py', 'engine/rules.py', 'engine/extras.py', 'engine/export.py']
+ENGINE_POST = ['engine/scan.py', 'engine/facts.py', 'engine/rules.py', 'engine/extras.py', 'engine/status.py', 'engine/export.py']
 SKIP_DIRS = {'node_modules', '.git', 'build', '.build', 'dist', '.next', '.spm', 'vendor', '.vinext', '.wrangler', '.sites-runtime',
              'outputs', '.local', '.openai', '.gradle', '.kotlin', 'DerivedData', 'Pods', '.claude', '__pycache__', '.venv', 'venv', 'target', '.idea'}
 PSEUDO = [dict(id='device', name='기기 저장소 · OS', sub='단말 안의 저장소와 시스템 서비스'), dict(id='cloud', name='외부 서비스', sub='서드파티 API · 클라우드')]
@@ -674,12 +675,231 @@ def cmd_site(cfg, args):
             '<style>body{margin:0}[hidden]{display:none!important}</style></head><body>\n')
     write_atomic(os.path.join(args.out, 'index.html'), head + body + '\n</body></html>\n')
     src, made = os.path.join(cfg['_dir'], cfg.get('out', '.')), ['index.html']
-    for f in ('atlas-data.json', 'atlas-manifest.json', 'atlas-notes.json'):      # 메모 파일(사람이 쓴 설명·예시 문의)은 있을 때만
-        if f == 'atlas-notes.json' and not os.path.exists(os.path.join(src, f)):
+    for f in ('atlas-data.json', 'atlas-manifest.json', 'atlas-notes.json', 'atlas-runtime.json'):      # 메모(사람이 쓴 설명)와 실측 응답은 있을 때만
+        if f in ('atlas-notes.json', 'atlas-runtime.json') and not os.path.exists(os.path.join(src, f)):
             continue
         write_atomic(os.path.join(args.out, f), open(os.path.join(src, f), encoding='utf-8').read())
         made.append(f)
     print(f'{args.out} 에 {", ".join(made)} 을 만들었습니다. 이 폴더를 사내 웹 서버에 올리면 됩니다.')
+
+
+# ───────────────────────────── 실측 응답 (접속 로그) ─────────────────────────────
+LOG_KEYS = dict(method=('method', 'verb', 'http_method', 'request_method', 'requestmethod', 'httpmethod'),
+                path=('path', 'uri', 'url', 'request_uri', 'requesturl', 'request_path', 'target', 'endpoint'),
+                status=('status', 'status_code', 'statuscode', 'response_code', 'http_status', 'responsestatus', 'response_status'),
+                ms=('duration_ms', 'latency_ms', 'elapsed_ms', 'response_time_ms', 'took_ms', 'request_time'))
+LOG_CLF = re.compile(r'"(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+(\S+)[^"]*"\s+(\d{3})\b')
+LOG_LOOSE = re.compile(r'\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+((?:https?://[^/\s]+)?/\S*).*?(?<![\d.:/])([1-5]\d{2})(?![\d.])')
+
+
+def parse_log_line(line, custom=None):
+    """접속 로그 한 줄 → (메서드, 경로, 상태 코드, 걸린 시간 ms | None). 알아볼 수 없으면 None.
+    JSON 한 줄, nginx·Apache 기본 형식("GET /x HTTP/1.1" 200), 'GET /x … 200' 꼴의 앱 로그를 차례로 시도한다."""
+    line = line.strip()
+    if not line:
+        return None
+    if custom is not None:
+        m = custom.search(line)
+        if not m:
+            return None
+        g = m.groupdict()
+        return (g.get('method') or 'GET').upper(), g['path'], int(g['status']), float(g['ms']) if g.get('ms') else None
+    if line[0] == '{':
+        try:
+            o = json.loads(line)
+        except ValueError:
+            o = None
+        if isinstance(o, dict):
+            low = {}
+            for k, v in o.items():                      # 한 겹 안쪽(httpRequest, request, response …)까지 본다
+                if isinstance(v, dict):
+                    for k2, v2 in v.items():
+                        low.setdefault(k2.lower(), v2)
+            low.update({k.lower(): v for k, v in o.items() if not isinstance(v, dict)})
+            pick = lambda names: next((low[n] for n in names if low.get(n) not in (None, '')), None)
+            method, path, status, ms = pick(LOG_KEYS['method']), pick(LOG_KEYS['path']), pick(LOG_KEYS['status']), pick(LOG_KEYS['ms'])
+            if path is not None and re.fullmatch(r'[1-5]\d{2}', str(status or '')):
+                try:
+                    ms = float(ms) * (1000 if 'request_time' in low and ms == low.get('request_time') else 1) if ms is not None else None
+                except (TypeError, ValueError):
+                    ms = None
+                return str(method or 'GET').upper(), str(path), int(status), ms
+            return None
+    m = LOG_CLF.search(line) or LOG_LOOSE.search(line)
+    return (m.group(1), m.group(2), int(m.group(3)), None) if m else None
+
+
+def route_table(records):
+    """분석 결과에서 '제공하는 API' 표를 만든다: 메서드, 경로 조각, 그것을 처리하는 유닛·메서드."""
+    out = []
+    for u in records:
+        for m in (u.get('m') or []) if u.get('rt') == 'unit' else []:
+            r = m.get('route') or ''
+            if ' ' in r:
+                method, path = r.split(' ', 1)
+                out.append(dict(method=method.upper(), segs=norm_path(path), id=u['id'], m=m['n'], route=r))
+    return out
+
+
+def log_segments(path, strip=()):
+    path = re.sub(r'^https?://[^/]+', '', path.split('?')[0].split('#')[0])
+    for pre in strip:
+        if path == pre or path.startswith(pre.rstrip('/') + '/'):
+            path = path[len(pre.rstrip('/')):]
+            break
+    return [s for s in path.strip('/').split('/') if s]
+
+
+def match_log(table, method, segs):
+    """실제 요청 경로(값이 들어 있다)에 맞는 라우트. 글자가 그대로 맞는 조각이 많은 쪽을 고른다."""
+    best, best_score = None, -1
+    for r in table:
+        if len(r['segs']) != len(segs) or r['method'] not in (method, 'ALL', '*', 'ANY'):
+            continue
+        score = 0
+        for a, b in zip(r['segs'], segs):
+            if a.startswith(':'):
+                continue
+            if a != b:
+                score = None
+                break
+            score += 2
+        if score is None:
+            continue
+        score += 1 if r['method'] == method else 0
+        if score > best_score:
+            best, best_score = r, score
+    return best
+
+
+def shape_of(method, segs):
+    """맞는 라우트가 없는 경로를 모을 때 쓰는 모양. 숫자·긴 식별자 조각은 값이므로 가린다."""
+    return method + ' /' + '/'.join(':id' if re.fullmatch(r'\d+|[0-9a-fA-F-]{16,}|[A-Za-z0-9_-]{24,}', s) else s for s in segs[:8])
+
+
+def runtime_summary(table_size, events, source, window, abnormal):
+    """(라우트, 코드, ms) 사건 목록 → atlas-runtime.json 내용. 값(쿼리, 본문, 사용자 정보)은 담지 않고 횟수만 담는다."""
+    agg, unmatched, matched = {}, {}, 0
+    for r, shape, code, ms in events:
+        if r is None:
+            unmatched[shape] = unmatched.get(shape, 0) + 1
+            continue
+        matched += 1
+        a = agg.setdefault((r['id'], r['m'], r['route']), dict(codes={}, ms=[]))
+        a['codes'][code] = a['codes'].get(code, 0) + 1
+        if ms is not None:
+            a['ms'].append(ms)
+    routes = []
+    for (uid, mn, route), a in agg.items():
+        rec = dict(id=uid, m=mn, route=route, n=sum(a['codes'].values()), codes={str(c): n for c, n in sorted(a['codes'].items())})
+        if a['ms']:
+            ms = sorted(a['ms'])
+            rec['p95'] = round(ms[min(len(ms) - 1, int(len(ms) * 0.95))], 1)
+        routes.append(rec)
+    routes.sort(key=lambda r: (-sum(n for c, n in r['codes'].items() if int(c) >= abnormal), -r['n']))
+    return dict(generated=datetime.datetime.now().isoformat(timespec='seconds'), source=source, window=window, total=len(events), matched=matched,
+                abnormal_from=abnormal, known_routes=table_size, routes=routes,
+                unmatched=sorted(unmatched.items(), key=lambda kv: -kv[1])[:15])
+
+
+def cmd_ingest(cfg, args):
+    """접속 로그를 읽어 라우트별 응답 코드 횟수를 atlas-runtime.json 으로 만든다. 화면은 이것을 지도 위에 얹는다."""
+    out_dir = os.path.normpath(os.path.join(cfg['_dir'], cfg.get('out', '.')))
+    rpath = os.path.join(out_dir, 'atlas-runtime.json')
+    if args.clear:
+        if os.path.exists(rpath):
+            os.remove(rpath)
+        print('실측 응답을 지웠습니다.')
+        return
+    dpath = os.path.join(out_dir, 'atlas-data.json')
+    if not os.path.exists(dpath):
+        raise SystemExit('아직 분석 결과가 없습니다. 먼저 sync 를 실행하세요.')
+    if not args.logs:
+        raise SystemExit('로그 파일을 주세요. 표준 입력은 - 로 적습니다 (예: tail -f access.log | atlas.py -w <이름> ingest - --follow).')
+    table = route_table(json.load(open(dpath, encoding='utf-8')))
+    rt_cfg = cfg.get('runtime', {})
+    custom = re.compile(args.regex or rt_cfg['regex']) if (args.regex or rt_cfg.get('regex')) else None
+    strip = tuple(args.strip_prefix or rt_cfg.get('strip_prefix', []))
+    source = args.label or ', '.join('표준 입력' if p == '-' else os.path.basename(p) for p in args.logs)
+
+    def event(line):
+        rec = parse_log_line(line, custom)
+        if rec is None:
+            return None
+        method, path, code, ms = rec
+        segs = log_segments(path, strip)
+        r = match_log(table, method, segs)
+        return (r, None if r else shape_of(method, segs), code, ms)
+
+    def report(doc, skipped):
+        bad = sum(n for r in doc['routes'] for c, n in r['codes'].items() if int(c) >= args.abnormal)
+        print(f"요청 {doc['total']}건 · 라우트에 맞은 것 {doc['matched']}건 · 비정상({args.abnormal} 이상) {bad}건 · 알아보지 못한 줄 {skipped}")
+        for r in [r for r in doc['routes'] if any(int(c) >= args.abnormal for c in r['codes'])][:8]:
+            print(f"  비정상 {r['route']:<40} " + ' '.join(f'{c}×{n}' for c, n in r['codes'].items() if int(c) >= args.abnormal) + f"  ({r['id']}.{r['m']})")
+        if doc['unmatched'] and doc['matched'] < doc['total']:
+            print('  라우트를 찾지 못한 경로(상위): ' + ', '.join(f'{k} ×{n}' for k, n in doc['unmatched'][:5]))
+            print('  경로 앞에 게이트웨이 접두어가 붙어 있으면 --strip-prefix /접두어 를 주세요.')
+
+    if not args.follow:
+        events, skipped = [], 0
+        for p in args.logs:
+            fh = sys.stdin if p == '-' else open(p, encoding='utf-8', errors='replace')
+            for line in fh:
+                e = event(line)
+                if e is None:
+                    skipped += 1 if line.strip() else 0
+                else:
+                    events.append(e)
+        if args.last:
+            events = events[-args.last:]
+        doc = runtime_summary(len(table), events, source, f'{len(events)}건' + (' (마지막)' if args.last else ''), args.abnormal)
+        write_atomic(rpath, json.dumps(doc, ensure_ascii=False, indent=1))
+        report(doc, skipped)
+        print(f'{rpath} 에 적었습니다. 열려 있는 화면은 10초 안에 반영합니다.')
+        return
+    # 따라가기: 새로 들어오는 줄을 읽으며 최근 N초 창을 몇 초마다 다시 적는다
+    import collections
+    import threading
+    queue, done = collections.deque(), threading.Event()
+
+    def reader(p):
+        if p == '-':
+            for line in sys.stdin:
+                queue.append(line)
+            done.set()
+            return
+        with open(p, encoding='utf-8', errors='replace') as fh:
+            fh.seek(0, 2)                                  # 파일은 끝에서부터: 지금부터 들어오는 줄만 본다
+            while True:
+                line = fh.readline()
+                if line:
+                    queue.append(line)
+                else:
+                    time.sleep(0.4)
+
+    for p in args.logs:
+        threading.Thread(target=reader, args=(p,), daemon=True).start()
+    recent, skipped = collections.deque(), 0
+    print(f'{source} 를 따라가는 중입니다. 최근 {args.window}초를 {args.every}초마다 적습니다. 끝내려면 Ctrl+C.')
+    try:
+        while True:
+            now = time.time()
+            while queue:
+                e = event(queue.popleft())
+                if e is None:
+                    skipped += 1
+                else:
+                    recent.append((now, e))
+            while recent and recent[0][0] < now - args.window:
+                recent.popleft()
+            doc = runtime_summary(len(table), [e for _, e in recent], source, f'최근 {args.window}초', args.abnormal)
+            write_atomic(rpath, json.dumps(doc, ensure_ascii=False, indent=1))
+            if done.is_set() and not queue:
+                report(doc, skipped)
+                return
+            time.sleep(args.every)
+    except KeyboardInterrupt:
+        print('\n끝냈습니다. 마지막으로 적은 내용은 남아 있습니다 (지우려면 ingest --clear).')
 
 
 def make_server(cfg, port=0):
@@ -693,7 +913,7 @@ def make_server(cfg, port=0):
 
         def translate_path(self, path):
             name = path.split('?')[0].split('#')[0].lstrip('/')
-            if name in ('atlas-data.json', 'atlas-manifest.json', 'atlas-notes.json'):
+            if name in ('atlas-data.json', 'atlas-manifest.json', 'atlas-notes.json', 'atlas-runtime.json'):
                 return os.path.join(live, name)
             return super().translate_path(path)
 
@@ -738,6 +958,9 @@ def main():
     sub.add_parser('status')
     p = sub.add_parser('site'); p.add_argument('viewer', nargs='?'); p.add_argument('out', nargs='?')
     p = sub.add_parser('open'); p.add_argument('--port', type=int, default=0); p.add_argument('--no-browser', action='store_true')
+    p = sub.add_parser('ingest'); p.add_argument('logs', nargs='*'); p.add_argument('--follow', action='store_true'); p.add_argument('--window', type=int, default=300)
+    p.add_argument('--every', type=float, default=3); p.add_argument('--last', type=int); p.add_argument('--abnormal', type=int, default=400); p.add_argument('--regex')
+    p.add_argument('--strip-prefix', action='append'); p.add_argument('--label'); p.add_argument('--clear', action='store_true')
     args = ap.parse_args()
     if args.workspace and not args.config:
         args.config = os.path.join(os.path.dirname(HERE), 'workspaces', args.workspace, 'atlas.config.json')
@@ -755,7 +978,7 @@ def main():
     if not os.path.exists(args.config):
         raise SystemExit(f'{args.config} 가 없습니다. 먼저 init 을 실행하세요 (예: python3 atlas/atlas.py -w <이름> init).')
     cfg = load_config(args.config)
-    {'add': cmd_add, 'sync': cmd_sync, 'status': cmd_status, 'site': cmd_site, 'open': cmd_open}[args.cmd](cfg, args)
+    {'add': cmd_add, 'sync': cmd_sync, 'status': cmd_status, 'site': cmd_site, 'open': cmd_open, 'ingest': cmd_ingest}[args.cmd](cfg, args)
 
 
 if __name__ == '__main__':

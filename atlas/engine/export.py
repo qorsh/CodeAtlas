@@ -28,6 +28,8 @@ for i, u in enumerate(units):
         rec['tests'] = sorted(set(u['tests']))[:8]
     if u.get('x'):
         rec['lit'] = u['x']
+    if u.get('status'):
+        rec['status'] = u['status']
     mem = []
     for old in u['_order']:
         m = u['members'][old]
@@ -38,6 +40,8 @@ for i, u in enumerate(units):
             o['d'] = m['d'][:220]
         if m.get('route'):
             o['route'] = m['route']
+        if m.get('st'):
+            o['st'] = m['st']
         if m.get('c'):
             o['c'] = [[t, units[t]['_remap'][tm]] for t, tm in m['c']]
         if m.get('x'):
@@ -74,6 +78,6 @@ RESULT = dict(
         mtok={str(i): t for i, t in mirror_toks.items()},
     ),
     stats=dict(files=sum(1 for k in file_info if k), units=len(units), members=sum(len(u['members']) for u in units), literals=n_lit,
-               annotations=n_ann, string_calls=n_scall, rule_hits=dict(rule_hits),
+               annotations=n_ann, string_calls=n_scall, status_sites=n_status, rule_hits=dict(rule_hits),
                parsers={s['id']: SITTER_USED.get(s['lang'], 'builtin') for s in SYSTEMS}),
 )

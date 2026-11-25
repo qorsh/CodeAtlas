@@ -1,7 +1,7 @@
 """코드 아틀라스 분석 엔진 · 머리말.
 
 묶음(같은 이름공간을 쓰는 시스템들) 하나를 분석할 때마다 engine/ 과 langs/ 의 파일들이 이 순서로 한 이름공간에서 실행된다:
-  prelude → text → store → (필요한 언어 어댑터들) → scan → facts → rules → extras → export
+  prelude → text → store → (필요한 언어 어댑터들) → scan → facts → rules → extras → status → export
 실행 전에 atlas.py 가 세 값을 넣어 준다.
   ROOT     소스 루트 경로
   SYSTEMS  이 묶음에 속한 시스템 설정 목록 (atlas.config.json 의 systems 항목)

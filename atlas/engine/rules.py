@@ -8,6 +8,8 @@
   unit-annotation  유닛에 붙은 어노테이션 → 테이블 제공 (JPA @Entity/@Table …)
   unit-text        유닛 원문 정규식 → 테이블 제공 (SQLAlchemy __tablename__ …)
   service          외부·기기 서비스 사용 흔적
+  status           응답 상태 코드를 내려주는 자리 (http.Error, HTTPException, res.status …). 정규식의 첫 묶음이 코드 숫자나 이름이다.
+                   map: 묶음 값 → 코드 표 · unit: 타입 선언에 붙은 것이면 그 타입(예외 클래스)의 코드로 삼는다
   heuristic        이름으로 부르는 내장 휴리스틱 (프레임워크 없이 경로 문자열을 직접 쓰는 클라이언트용)
 모든 접점에는 만든 규칙 이름이 남는다.
 """
@@ -18,6 +20,40 @@ other_ports = []   # 그 밖의 접점(메시지 토픽 등): [kind, 'provide'|'
 svc_hits = {}      # 서비스 id -> {unit: 횟수}
 rule_hits = Counter()
 _hosts = '|'.join(re.escape(h) for h in OPTS.get('api_hosts', []))
+
+
+# ── 응답 상태 코드: 이름 ↔ 숫자 ──
+STATUS_NAMES = {
+    'OK': 200, 'CREATED': 201, 'ACCEPTED': 202, 'NOCONTENT': 204, 'MOVEDPERMANENTLY': 301, 'FOUND': 302, 'SEEOTHER': 303, 'NOTMODIFIED': 304,
+    'TEMPORARYREDIRECT': 307, 'PERMANENTREDIRECT': 308, 'BADREQUEST': 400, 'UNAUTHORIZED': 401, 'PAYMENTREQUIRED': 402, 'FORBIDDEN': 403,
+    'NOTFOUND': 404, 'METHODNOTALLOWED': 405, 'NOTACCEPTABLE': 406, 'REQUESTTIMEOUT': 408, 'CONFLICT': 409, 'GONE': 410, 'PRECONDITIONFAILED': 412,
+    'PAYLOADTOOLARGE': 413, 'REQUESTENTITYTOOLARGE': 413, 'UNSUPPORTEDMEDIATYPE': 415, 'IMATEAPOT': 418, 'UNPROCESSABLEENTITY': 422,
+    'UNPROCESSABLECONTENT': 422, 'LOCKED': 423, 'TOOMANYREQUESTS': 429, 'INTERNALSERVERERROR': 500, 'INTERNALSERVER': 500, 'NOTIMPLEMENTED': 501,
+    'BADGATEWAY': 502, 'SERVICEUNAVAILABLE': 503, 'GATEWAYTIMEOUT': 504, 'HTTPVERSIONNOTSUPPORTED': 505,
+}
+# 이름으로 어림할 때 쓰는 낱말. 위에서부터 먼저 맞는 것을 쓴다.
+STATUS_GUESS = [(r'NotFound|NoSuch|Missing', 404), (r'Unauthori[sz]ed|Unauthenticated|InvalidToken|TokenExpired|SessionExpired', 401),
+                (r'Forbidden|AccessDenied|PermissionDenied|NotAllowed', 403), (r'Conflict|Duplicate|AlreadyExists?|AlreadyUsed', 409),
+                (r'TooManyRequests|RateLimit|Throttl', 429), (r'Unprocessable', 422), (r'BadRequest|Invalid|Validation|Illegal(Argument|State)?|Malformed', 400),
+                (r'Timeout|TimedOut', 504), (r'Unavailable|Overloaded', 503)]
+
+
+def status_of(name):
+    """HttpStatus.NOT_FOUND · StatusNotFound · NotFoundException · HTTP_404_NOT_FOUND · 404 → 404. 모르면 None."""
+    name = (name or '').split('.')[-1]
+    m = re.fullmatch(r'(?:HTTP_|SC_|Status)?(\d{3})(?:_\w+)?', name)
+    if m:
+        return int(m.group(1)) if 100 <= int(m.group(1)) <= 599 else None
+    key = re.sub(r'^(HTTP_|SC_|Status|Http)', '', name)
+    key = re.sub(r'(Exception|Error)$', '', key)
+    return STATUS_NAMES.get(re.sub(r'[^A-Za-z]', '', key).upper())
+
+
+def status_guess(name):
+    for pat, code in STATUS_GUESS:
+        if re.search(pat, name):
+            return code
+    return None
 
 
 def _sub(tpl, m):
@@ -205,6 +241,26 @@ def rule_unit(R, rid, i, u, fi, items):
     rule_hits[rid] += 1
 
 
+def rule_status(R, rid, i, u, fi, items):
+    """상태 코드가 적힌 자리를 멤버에 모아 둔다. 문구 붙이기와 예외 클래스 풀기는 engine/status.py 가 한다."""
+    rx, which = re.compile(R['regex']), 'src' if R.get('on') == 'src' else 'code'
+    for a, b in u['ranges']:
+        for m in rx.finditer(fi[which][a:b + 1]):
+            raw = next((g for g in m.groups() if g), '')
+            code = R['map'].get(raw) if R.get('map') else status_of(raw)
+            if not code:
+                continue
+            pos = a + m.start()
+            mi = member_at(u, pos)
+            if R.get('unit'):
+                if mi is None:
+                    u['status'] = code
+                continue
+            if mi is not None:
+                u['members'][mi].setdefault('_st', []).append((code, pos, a + m.end(), 0))
+                rule_hits[rid] += 1
+
+
 def rule_service(R, rid, i, u, fi, items):
     lang = fi['lang']
     key = 'ts' if lang == 'js' else lang
@@ -281,7 +337,7 @@ def heur_slash_literal(R, rid, i, u, fi, items):
 
 HEURISTICS = {'path-arg': heur_path_arg, 'base-url': heur_base_url, 'slash-literal': heur_slash_literal}
 RULE_FN = {'annotation': rule_annotation, 'call': rule_call, 'code': rule_regex, 'text': rule_regex,
-           'unit-annotation': rule_unit, 'unit-text': rule_unit, 'service': rule_service}
+           'unit-annotation': rule_unit, 'unit-text': rule_unit, 'service': rule_service, 'status': rule_status}
 
 PACKS = {p['id']: p for p in OPTS.get('rules', [])}
 for i, u in enumerate(units):

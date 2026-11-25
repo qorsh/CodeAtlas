@@ -70,6 +70,35 @@
       "kind": "topic",
       "role": "provide",
       "match": "(?i)kafka\\w*\\.send$"
+    },
+    {
+      "id": "status-class",
+      "type": "status",
+      "unit": true,
+      "regex": "@ResponseStatus\\(\\s*(?:(?:value|code)\\s*=\\s*)?HttpStatus\\.([A-Z_]+)"
+    },
+    {
+      "id": "status-const",
+      "type": "status",
+      "regex": "(?<![=!<>]=)(?<![=!<>]= )(?<!case )\\bHttpStatus\\.([A-Z_]+)\\b"
+    },
+    {
+      "id": "status-entity",
+      "type": "status",
+      "regex": "\\bResponseEntity\\.(notFound|badRequest|noContent|accepted|unprocessableEntity|internalServerError)\\(",
+      "map": {
+        "notFound": 404,
+        "badRequest": 400,
+        "noContent": 204,
+        "accepted": 202,
+        "unprocessableEntity": 422,
+        "internalServerError": 500
+      }
+    },
+    {
+      "id": "status-number",
+      "type": "status",
+      "regex": "\\b(?:ResponseEntity\\.status|sendError|setStatus)\\(\\s*(\\d{3})(?!\\d)"
     }
   ]
 }

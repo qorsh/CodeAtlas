@@ -161,6 +161,16 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--holo);outline-o
 .status{grid-area:3/3;align-self:end;justify-self:end;padding:7px 11px;font:400 10.5px/1.5 var(--font-mono);color:var(--ink-dim);text-align:right;font-variant-numeric:tabular-nums;max-width:100%}
 .status b{color:var(--holo);font-weight:500}
 .status .hint{color:var(--ink-faint)}
+/* 실측 응답: 비정상은 붉은 네온 한 가지 색으로만 알린다 */
+.rtbox{margin-top:2px;padding-top:6px;border-top:1px solid var(--line-soft);font:400 10.5px/1.5 var(--font-mono);color:var(--ink-dim);font-variant-numeric:tabular-nums}
+.rtbox b{color:#FF5A6A;font-weight:600} .rtbox .ok{color:#6CF0C6}
+.rtbox .mini-act{display:inline-block;margin:4px 6px 0 0}
+.codes{display:flex;flex-wrap:wrap;gap:4px;margin-top:3px}
+.xrow .r.codes{display:flex}
+.code{font:500 10.5px/1.5 var(--font-mono);padding:0 6px;border:1px solid var(--line);color:var(--ink-dim);white-space:nowrap}
+.code i{font-style:normal;color:var(--ink-faint);margin-left:3px}
+.code.bad{color:#FF5A6A;border-color:#FF3B4E} .code.bad i{color:#FF8A95}
+.mrow .l b{color:#FF5A6A;font-weight:500}
 .stepnav{display:flex;gap:8px;align-items:center;padding:8px 14px;border-bottom:1px solid var(--line-soft);font:500 11px var(--font-mono);color:var(--ink-dim)}
 .stepnav .mini-act,.walk .mini-act{margin-left:0;font-size:11px;padding:4px 8px;color:var(--ink-dim)}
 .stepnav #stepno{color:var(--trace);font-variant-numeric:tabular-nums;min-width:52px;text-align:center}
@@ -200,6 +210,7 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--holo);outline-o
   <header class="brand panel">
     <div class="brand-id"><b id="brand-name">ATLAS</b><span>CODE ATLAS</span></div>
     <div class="brand-stats" id="stats">&nbsp;</div>
+    <div class="rtbox" id="rtbox" hidden></div>
   </header>
 
   <div class="search panel" id="search">
@@ -235,8 +246,8 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--holo);outline-o
    atlas-notes.json 이 데이터 옆에 있으면 읽는다. 분석 대상에 대한 내용(사람이 쓴 유닛 설명, 예시 문의, 제품 용어, 시스템 색)은
    모두 그 파일에 두고, 이 화면에는 어떤 제품의 내용도 넣지 않는다.
      {"notes": {"<유닛 id>": {"role","inp","how","out"}}, "scenarios": [{"id","type","label","q","summary","causes","steps","kw"}],
-      "alias": {"<한국어 낱말>": ["english", ...]}, "colors": {"<시스템 id>": "#RRGGBB"}} */
-let NOTES = {}, SCENARIOS = [], WSCOLORS = {};
+      "alias": {"<한국어 낱말>": ["english", ...]}, "colors": {"<시스템 id>": "#RRGGBB"}, "columns": [["<시스템 id>", ...], ...]} */
+let NOTES = {}, SCENARIOS = [], WSCOLORS = {}, WSCOLS = null;
 /* 한국어 문의를 영문 식별자 조각으로 잇는 기본 낱말. 제품 고유 용어는 atlas-notes.json 의 alias 로 더한다. */
 const ALIAS = {'로그인':['auth','login','signin','session'],'로그아웃':['logout','signout','session'],'세션':['session','token','refresh'],'토큰':['token','session'],'인증':['auth','verify','verification'],
  '가입':['signup','register','join'],'계정':['account','user','member','auth'],'탈퇴':['deletion','withdraw','account'],'회원':['member','user'],'비밀번호':['password','credential'],'권한':['permission','role','auth'],'프로필':['profile'],'닉네임':['nickname','username'],'아이디':['username','user'],
@@ -255,6 +266,7 @@ function applyNotes(d){
   if (!d || typeof d !== 'object') return;
   const obj = x => x && typeof x === 'object' && !Array.isArray(x) ? x : {};
   NOTES = obj(d.notes); WSCOLORS = obj(d.colors);
+  WSCOLS = Array.isArray(d.columns) && d.columns.every(Array.isArray) ? d.columns.map(c => c.map(String)) : null;
   SCENARIOS = (Array.isArray(d.scenarios) ? d.scenarios : []).filter(s => s && s.id && s.q && Array.isArray(s.steps));
   for (const [k, v] of Object.entries(obj(d.alias))) if (Array.isArray(v)) ALIAS[String(k).toLowerCase()] = v.map(String);
 }
@@ -270,7 +282,7 @@ const KIND = {view:['VIEW','화면',0,'#8BEBFF'],page:['PAGE','웹 화면',0,'#8
 const EK = {use:{c:'#5AD7FF',ko:'코드 참조'},http:{c:'#FFD166',ko:'API 호출'},db:{c:'#D7A6FF',ko:'DB'},svc:{c:'#5EEAD4',ko:'외부·기기 서비스'},mirror:{c:'#E8F4FF',ko:'플랫폼 간 대응 구현'},msg:{c:'#FF9EC4',ko:'메시지·이벤트'}};
 const egroup = k => k==='ext' ? 'use' : k==='rel' ? 'db' : k;
 const FD = '"Chakra Petch","IBM Plex Sans KR",sans-serif', FM = '"JetBrains Mono",ui-monospace,Menlo,monospace', FB = '"IBM Plex Sans KR",system-ui,sans-serif';
-const TRACE = '#FF8A3D', HOLO = '#5AD7FF';
+const TRACE = '#FF8A3D', HOLO = '#5AD7FF', RED = '#FF3B4E', OKC = '#6CF0C6';
 const CW=260, CH=46, MR=15, MAXM=12, GX=24, GY=18, MP=30, MT=64, SPD=90, STT=200, MG=80;
 const TAU = Math.PI*2;
 const clamp = (x,a,b) => Math.min(b, Math.max(a, x));
@@ -288,7 +300,7 @@ let zMin = 0.01, zMax = 3.2, fitZ = 0.05, Z_SYS = 0.08;
 let META, UNITS = [], EDGES = [], SYS = {}, SYSL = [], MODS = [], MODE = [], SYSE = [], ADJ = [];
 let WORLD = {x0:0,y0:0,x1:1,y1:1};
 const byId = new Map();
-const show = {use:true, http:true, db:true, svc:true, mirror:true, msg:true};
+const show = {use:true, http:true, db:true, svc:true, mirror:true, msg:true, rt:true};
 const state = {sel:null, trace:null, hits:null, impact:null, hover:null, edge:null, hoverEdge:null, walk:null};
 let focus = null, dirty = true, anim = null, inertia = null, zoomTarget = null, drawMs = 0, vis = [];
 const AI = {fn:null, state:'wait', ctl:null, timer:null, notes:{}, hist:[], noteBusy:null, noteErr:null, index:null};
@@ -363,7 +375,22 @@ function layout(){
     const ox = (s.w - p.w)/2, oy = STT + (s.h - STT - SPD - p.h)/2;
     for (const m of s.mods){ m.rx = m.x + ox; m.ry = m.y + oy; }
   }
-  const COLS = [['device'],['ext','ios','android'],['admin','server','landing'],['cloud','db']];
+  /* 시스템을 '부르는 쪽 → 불리는 쪽' 순서의 열로 놓는다. 시스템 사이의 API·DB·서비스·메시지 연결 방향으로 깊이를 매기고,
+     기기 저장소는 맨 앞, 외부 서비스는 맨 뒤 열에 둔다. 작업 공간 메모(atlas-notes.json 의 columns)가 열을 정해 두었으면 그것을 따른다. */
+  const baseIds = META.systems.filter(s => !s.base).map(s => s.id), rank = {}, outs = {};
+  for (const id of baseIds){ rank[id] = 0; outs[id] = new Set(); }
+  for (const e of SYSE){ const a = e.a.base || e.a.id, b = e.b.base || e.b.id; if (a !== b && outs[a] && b in rank && ['http','db','svc','msg'].includes(e.g)) outs[a].add(b); }
+  for (let pass = 0; pass < baseIds.length; pass++){
+    let moved = false;
+    for (const a of baseIds) for (const b of outs[a]) if (rank[b] < rank[a] + 1 && rank[a] + 1 < baseIds.length){ rank[b] = rank[a] + 1; moved = true; }
+    if (!moved) break;
+  }
+  const deepest = Math.max(1, ...baseIds.filter(id => id !== 'device' && id !== 'cloud').map(id => rank[id]));
+  if ('device' in rank) rank.device = -1;
+  if ('cloud' in rank) rank.cloud = deepest;
+  let COLS = WSCOLS && WSCOLS.map(c => c.filter(id => id in rank)).filter(c => c.length);
+  if (COLS){ const placed = new Set(COLS.flat()), rest = baseIds.filter(id => !placed.has(id)); if (rest.length) COLS.push(rest); }
+  else COLS = [...new Set(baseIds.map(id => rank[id]))].sort((a,b) => a-b).map(r => baseIds.filter(id => rank[id] === r));
   const GAPX = 1300, GAPY = 800, GAPC = 3200, tag = k => k ? '@' + k : '';
   const placeCluster = (k, ox, oy) => {
     let x = 0, hmax = 0;
@@ -452,7 +479,7 @@ function pathCurve(g){ ctx.moveTo(g[0],g[1]); ctx.bezierCurveTo(g[2],g[3],g[4],g
 function chamfer(x,y,w,h,k){ k = Math.min(k, h/3); ctx.moveTo(x,y); ctx.lineTo(x+w-k,y); ctx.lineTo(x+w,y+k); ctx.lineTo(x+w,y+h); ctx.lineTo(x+k,y+h); ctx.lineTo(x,y+h-k); ctx.closePath(); }
 
 function draw(now){
-  const t0 = performance.now(), z = cam.z;
+  const t0 = performance.now(), z = cam.z, pulse = reduceMotion ? 0.85 : 0.5 + 0.5*Math.sin(now*0.0078), rtOn = !!RT && show.rt && show.http;
   const vx0 = cam.x - W/2/z, vy0 = cam.y - H/2/z, vx1 = cam.x + W/2/z, vy1 = cam.y + H/2/z;
   const inView = r => r.x < vx1 && r.x+r.w > vx0 && r.y < vy1 && r.y+r.h > vy0;
   screenTransform();
@@ -530,7 +557,8 @@ function draw(now){
       ctx.beginPath(); pathCurve(e.geo); const lw = (1.2 + Math.log2(1+e.w)*0.75)*px1, col = EK[e.g].c, a = aTrunk*(focus ? 0.25 : 1);
       ctx.strokeStyle = rgba(col, 0.13*a); ctx.lineWidth = lw*4; ctx.stroke();
       ctx.strokeStyle = rgba(col, (e.g==='use' ? 0.5 : 0.85)*a); ctx.lineWidth = lw; ctx.setLineDash(e.g==='mirror' ? [9*px1,7*px1] : []); ctx.stroke(); ctx.setLineDash([]);
-      if (!reduceMotion && !focus && e.g !== 'mirror'){ const p = bez(e.geo, (now*0.00022 + e.ph) % 1); ctx.beginPath(); ctx.arc(p[0],p[1],2.4*px1,0,TAU); ctx.fillStyle = rgba('#FFFFFF', 0.9*aTrunk); ctx.fill(); }
+      if (rtOn && e.rt && !focus) drawFlow(e.geo, e.rt, now, px1, e.ph, pulse);
+      else if (!reduceMotion && !focus && e.g !== 'mirror'){ const p = bez(e.geo, (now*0.00022 + e.ph) % 1); ctx.beginPath(); ctx.arc(p[0],p[1],2.4*px1,0,TAU); ctx.fillStyle = rgba('#FFFFFF', 0.9*aTrunk); ctx.fill(); }
     }
   }
   if (aModEdge > 0.02){
@@ -543,6 +571,7 @@ function draw(now){
       ctx.strokeStyle = rgba(EK[g].c, base*aModEdge*(focus ? 0.3 : 1)); ctx.lineWidth = (g==='http'||g==='db' ? 1.5 : 1)*px1;
       ctx.setLineDash(g==='mirror' ? [6*px1,6*px1] : []); ctx.stroke(); ctx.setLineDash([]);
     }
+    if (rtOn && !focus) for (const e of MODE) if (e.rt && (inView(e.a) || inView(e.b))) drawFlow(e.geo, e.rt, now, px1, (e.a.idx*0.137) % 1, pulse);
   }
   const bright = []; let drawn = [];
   if (focus) for (const ei of focus.edges){ const e = EDGES[ei]; if (e && show[e.g]) bright.push(e); }
@@ -558,6 +587,10 @@ function draw(now){
     }
   }
   lastEdges = drawn; lastBright = bright;
+  if (rtOn && aUnitEdge > 0.02){                 // 실측 요청·응답: API 연결선을 따라 요청(흰 점)이 가고 응답(네모)이 돌아온다
+    const flow = e => { if (e.rt && (!focus || focus.edges.has(e.i))) drawFlow(e.geo || (e.geo = geom(UNITS[e.s], UNITS[e.t])), e.rt, now, px1, (e.i%13)/13, pulse); };
+    for (const u of vis){ for (const e of u.in) flow(e); for (const e of u.out) if (!UNITS[e.t].vis) flow(e); }
+  }
   for (const e of bright){
     const g = e.geo || (e.geo = geom(UNITS[e.s], UNITS[e.t])), col = EK[e.g].c;
     ctx.beginPath(); pathCurve(g); ctx.strokeStyle = rgba(col, 0.2); ctx.lineWidth = 5*px1; ctx.stroke();
@@ -644,11 +677,15 @@ function draw(now){
           const m = u.m[i], y = u.y + CH + i*MR;
           const on = sm && sm.u === u.i && sm.m === i, tr = u.tstep && u.tstep.has(i);
           if (on || tr){ ctx.fillStyle = rgba(TRACE, on ? 0.32 : 0.2); ctx.fillRect(u.x+3, y+2, u.w-6, MR-1); }
-          const right = m.route || `L${m.l}`;
+          const hotRt = rtOn && m.rt && m.rt.bad;
+          if (hotRt){ ctx.fillStyle = rgba(RED, 0.14 + 0.24*pulse); ctx.fillRect(u.x+3, y+2, u.w-6, MR-1); }
+          if (m.st && m.st.some(c => c[0] >= 400)){ ctx.fillStyle = RED; ctx.fillRect(u.x+u.w-5, y+4, 2.5, MR-7); }
+          const nameW = Math.min((m.n.length + 2)*6.5, u.w*0.4), rightMax = hotRt ? u.w - 28 - nameW : 140;
+          const right = fit((hotRt ? badText(m.rt, RT.from) + ' · ' : '') + (m.route || `L${m.l}`), rightMax, 10.5, 0.6);
           ctx.fillStyle = m.route || m.h ? '#FFD166' : m.db ? '#D7A6FF' : '#BFE9F8';
-          ctx.fillText(fit(m.n + (m.k ? '' : '()'), u.w - 30 - Math.min(right.length,22)*6.3, 10.5, 0.6), u.x+12, y+12.5);
-          ctx.fillStyle = m.route ? '#FFD166' : '#4F7F95'; ctx.textAlign = 'right';
-          ctx.fillText(fit(right, 140, 10.5, 0.6), u.x+u.w-10, y+12.5); ctx.textAlign = 'left';
+          ctx.fillText(fit(m.n + (m.k ? '' : '()'), u.w - 30 - Math.min(right.length, hotRt ? 40 : 22)*6.3, 10.5, 0.6), u.x+12, y+12.5);
+          ctx.fillStyle = hotRt ? '#FF7A88' : m.route ? '#FFD166' : '#4F7F95'; ctx.textAlign = 'right';
+          ctx.fillText(right, u.x+u.w-10, y+12.5); ctx.textAlign = 'left';
           if (m.route){ ctx.beginPath(); ctx.moveTo(u.x-9, y+4); ctx.lineTo(u.x-1, y+8.5); ctx.lineTo(u.x-9, y+13); ctx.closePath(); if (m.open){ ctx.strokeStyle = '#FFD166'; ctx.lineWidth = px1; ctx.stroke(); } else { ctx.fillStyle = '#FFD166'; ctx.fill(); } }
         }
         if (u.m.length > MAXM){ ctx.fillStyle = '#4F7F95'; ctx.fillText(`+ ${u.m.length-MAXM}개 더 · 클릭하면 전체`, u.x+12, u.y+CH+n*MR+12.5); }
@@ -685,6 +722,7 @@ function draw(now){
     }
     ctx.globalAlpha = 1; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
   }
+  drawAlarms(now, pulse);            // 비정상 응답 표시는 다른 표지에 가리지 않게 맨 위에
   drawMini();
   drawMs = drawMs*0.9 + (performance.now()-t0)*0.1;
 }
@@ -723,6 +761,50 @@ function drawEmblem(s, now, alpha){
   ctx.restore(); ctx.textAlign = 'left';
 }
 
+/* 요청·응답 입자. 요청은 부르는 쪽 → 서버로 가는 흰 점, 응답은 서버 → 부르는 쪽으로 돌아오는 네모(정상 초록, 비정상 빨강). */
+function drawFlow(g, rt, now, px1, seed, pulse){
+  if (rt.bad){ ctx.beginPath(); pathCurve(g); ctx.strokeStyle = rgba(RED, 0.16 + 0.42*pulse); ctx.lineWidth = 3.2*px1; ctx.stroke(); }
+  if (reduceMotion) return;
+  const k = Math.min(5, 1 + Math.floor(Math.log10(1 + rt.n)*1.4)), nb = rt.bad ? Math.max(1, Math.round(k*rt.bad/rt.n)) : 0, r = 2.5*px1, t = now*0.0003 + seed;
+  for (let i = 0; i < k; i++){
+    let p = bez(g, (t + i/k) % 1);
+    ctx.beginPath(); ctx.arc(p[0], p[1], r, 0, TAU); ctx.fillStyle = '#F2FCFF'; ctx.fill();
+    p = bez(g, 1 - ((t + (i + 0.5)/k) % 1));
+    if (i < nb){ ctx.beginPath(); ctx.arc(p[0], p[1], r*2.6, 0, TAU); ctx.fillStyle = rgba(RED, 0.3); ctx.fill(); }
+    ctx.fillStyle = i < nb ? RED : OKC; ctx.fillRect(p[0]-r*1.05, p[1]-r*1.05, r*2.1, r*2.1);
+  }
+}
+/* 붉은 네온. 실측에서 비정상 응답이 나온 유닛, 그리고 고른 메서드가 오류 코드를 내려줄 수 있는 자리에서 깜박인다. 어느 배율에서도 보이게 멀리서는 표지로 바꾼다. */
+function drawAlarms(now, pulse){
+  const z = cam.z, labels = [];
+  const neon = (x, y, w, h, label) => {
+    if (x > W+60 || y > H+60 || x+w < -60 || y+h < -60) return;
+    if (w < 30 || h < 10){
+      const cx = x + w/2, cy = y + h/2;
+      ctx.beginPath(); ctx.arc(cx, cy, 6 + 13*pulse, 0, TAU); ctx.strokeStyle = rgba(RED, 0.92 - 0.78*pulse); ctx.lineWidth = 2; ctx.stroke();
+      ctx.save(); ctx.shadowColor = RED; ctx.shadowBlur = (8 + 16*pulse)*DPR; ctx.beginPath(); ctx.arc(cx, cy, 4.2, 0, TAU); ctx.fillStyle = rgba(RED, 0.6 + 0.4*pulse); ctx.fill(); ctx.restore();
+      if (label) labels.push([cx + 13, cy - 8, label]);
+    } else {
+      ctx.save(); ctx.shadowColor = RED; ctx.shadowBlur = (6 + 22*pulse)*DPR; ctx.strokeStyle = rgba(RED, 0.38 + 0.62*pulse); ctx.lineWidth = 2; ctx.strokeRect(x-2, y-2, w+4, h+4); ctx.restore();
+      if (label) labels.push([x - 2, y - 21, label]);
+    }
+  };
+  if (RT && show.rt) for (const u of RT.badUnits) neon(SX(u.x), SY(u.y), u.w*z, u.h*z, `${u.name} · ${u.rt.routes.filter(x => x.bad).map(x => badText(x, RT.from)).join(' ')}`);
+  if (state.sel && state.sel.m != null) for (const x of selExits()){
+    const u = UNITS[x.u], rows = z >= 0.74 && x.mi < MAXM; if (!rows && x.u === state.sel.u) continue;
+    const r = rows ? memberRect(u, x.mi) : u; neon(SX(r.x), SY(r.y), r.w*z, r.h*z, rows || x.u === state.sel.u ? '' : `${x.code} ${u.name}`);
+  }
+  if (!labels.length) return;
+  ctx.font = `600 10.5px ${FM}`; ctx.textBaseline = 'middle'; const placed = [];
+  for (const [x, y, text] of labels.slice(0, 24)){
+    const t = fit(text, 230, 10.5, 0.62), tw = ctx.measureText(t).width + 10;
+    if (placed.some(p => Math.abs(p[0]-x) < Math.max(p[2], tw) && Math.abs(p[1]-y) < 17)) continue;
+    placed.push([x, y, tw]);
+    ctx.fillStyle = 'rgba(20,3,6,.92)'; ctx.fillRect(x, y, tw, 16); ctx.strokeStyle = rgba(RED, 0.5 + 0.5*pulse); ctx.lineWidth = 1; ctx.strokeRect(Math.round(x)+.5, Math.round(y)+.5, tw, 16);
+    ctx.fillStyle = '#FFC2C8'; ctx.fillText(t, x + 5, y + 8.5);
+  }
+  ctx.textBaseline = 'alphabetic';
+}
 function memberRect(u, mi){ return mi != null && mi < Math.min(u.m.length, MAXM) ? {x:u.x, y:u.y+CH+mi*MR+1, w:u.w, h:MR-1} : u; }
 function drawMemberWires(px1, now){
   const u = UNITS[state.sel.u], m = u.m[state.sel.m]; if (!m) return;
@@ -801,6 +883,7 @@ function drawMini(){
   for (const s of SYSL){ mctx.fillStyle = rgba(s.color,0.16); mctx.fillRect(s.x*k+ox, s.y*k+oy, s.w*k, s.h*k); mctx.strokeStyle = rgba(s.color,0.8); mctx.lineWidth = 1; mctx.strokeRect(s.x*k+ox+.5, s.y*k+oy+.5, s.w*k, s.h*k); }
   const pts = state.trace ? state.trace.units : state.hits ? state.hits.list.map(h => h.u) : state.sel ? [state.sel.u] : [];
   mctx.fillStyle = TRACE; for (const i of pts){ const u = UNITS[i]; mctx.fillRect((u.x+u.w/2)*k+ox-2, (u.y+u.h/2)*k+oy-2, 4, 4); }
+  if (RT && show.rt){ mctx.fillStyle = RED; for (const u of RT.badUnits) mctx.fillRect((u.x+u.w/2)*k+ox-2.5, (u.y+u.h/2)*k+oy-2.5, 5, 5); }
   const vw = W/cam.z*k, vh = H/cam.z*k, vx = (cam.x - W/2/cam.z)*k+ox, vy = (cam.y - H/2/cam.z)*k+oy;
   mctx.strokeStyle = '#FFFFFF'; mctx.lineWidth = 2; mctx.strokeRect(clamp(vx,1,mw-3), clamp(vy,1,mh-3), clamp(vw,6,mw-2), clamp(vh,6,mh-2));
 }
@@ -1178,10 +1261,10 @@ function renderTrace(){
     const bar = h.ai ? `<div class="aibar"><span class="pulse"></span><span>${h.ai.phase === 1 ? `AI가 유닛 ${UNITS.length}개에서 후보를 고르는 중` : `AI가 후보 ${h.ai.n}곳의 구조를 읽고 경로를 짜는 중`}</span><span class="el" id="ai-el"></span><button class="mini-act" data-act="ai-stop">중지</button></div>`
       : h.aiMsg ? `<div class="aibar err"><span>${esc(h.aiMsg)}</span>${h.aiRetry ? `<button class="mini-act" data-act="ai-retry">다시 시도</button>` : ''}</div>`
       : AI.state === 'on' && h.list.length ? `<div class="acts"><button class="act ai" data-act="ai-retry">AI로 경로 추적</button></div>` : '';
-    el.innerHTML = `<div class="side-head"><div><span class="eyebrow">${h.ai ? 'AI 추적' : '검색'}</span><h2>${esc(h.q)}</h2></div><button class="x" data-act="clear" aria-label="검색 닫기">닫기</button></div>
+    el.innerHTML = `<div class="side-head"><div><span class="eyebrow">${h.ai ? 'AI 추적' : esc(h.kind || '검색')}</span><h2>${esc(h.q)}</h2></div><button class="x" data-act="clear" aria-label="검색 닫기">닫기</button></div>
     <div class="side-body">${bar}${h.list.length ? `
       <section><h3>${h.ai && h.ai.phase === 2 ? 'AI가 고른 후보' : '걸린 곳'} <em>${h.list.length}곳${h.ai ? '' : ` · 서로 이어지는 경로 포함 ${h.units.size}곳 강조`}</em></h3><div class="steps">${h.list.map((x,i) => { const u = UNITS[x.u]; return `<button class="step" data-u="${u.i}"${x.m != null ? ` data-um="${x.m}"` : ''}><span class="no">${i+1}</span><span><span class="who">${sysTag(u)}${esc(u.name)}${x.m != null ? '.' + esc(u.m[x.m].n) : ''}</span><span class="what">${esc(KIND[u.kind][1])} · ${esc(u.mod)} · ${esc(x.why.slice(0,4).join(', '))}</span></span></button>`; }).join('')}</div></section>
-      <p class="note">${h.ai ? '후보를 먼저 지도에 띄워 두었습니다. 경로 분석은 보통 20초에서 1분쯤 걸립니다.' : '이름·메서드·주석·코드 속 문구에 대한 키워드 매칭 결과입니다. 한국어는 미리 넣어 둔 용어 사전으로 바꿔 찾습니다.'}</p>` : `<p class="sum">걸리는 곳이 없습니다. 기능 이름이나 화면에 뜬 문구로 적어 보세요. 예: 알림, 백업, 휴지통, 위젯, 동기화</p>`}
+      <p class="note">${h.ai ? '후보를 먼저 지도에 띄워 두었습니다. 경로 분석은 보통 20초에서 1분쯤 걸립니다.' : esc(h.note || '이름·메서드·주석·코드 속 문구에 대한 키워드 매칭 결과입니다. 한국어는 미리 넣어 둔 용어 사전으로 바꿔 찾습니다.')}</p>` : `<p class="sum">걸리는 곳이 없습니다. 기능 이름이나 화면에 뜬 문구로 적어 보세요. 예: 알림, 백업, 휴지통, 위젯, 동기화</p>`}
     </div>`;
     el.hidden = false;
   } else if (state.impact){
@@ -1217,11 +1300,12 @@ function renderInspector(){
   <div class="side-body">
     <section><p class="path"><span class="badge" style="color:${K[3]}">${K[0]}</span> ${u.file ? `${esc(u.file)}:${u.line} · ${u.loc}줄` : '저장소 밖의 서비스'}${u.conf ? ` · ${u.conf.slice(0,4).map(esc).join(', ')}` : ''}</p></section>
     ${roleSec}
+    ${u.rt && RT ? `<section><h3>실측 응답 <em>${esc(RT.source)} · ${esc(RT.window)}</em></h3><div class="xlink">${u.rt.routes.map(x => `<button class="xrow" data-u="${u.i}" data-um="${x.mi}" style="--c:${x.bad ? RED : OKC}"><span class="k">${x.bad ? '비정상' : '정상'}</span><span class="n">${esc(x.route)}<span class="r codes">${codeChips(x.codes, RT.from)}${x.p95 ? `<span class="code">p95 ${x.p95}ms</span>` : ''}</span></span></button>`).join('')}</div></section>` : ''}
     ${lits.length ? `<section><h3>화면 문구·오류 코드 <em>코드 속 문자열</em></h3><div class="lits">${lits.map(t => `<span class="lit">${esc(t)}</span>`).join('')}</div></section>` : ''}
     ${xr ? `<section><h3>시스템을 넘는 연결</h3><div class="xlink">${xr}</div></section>` : ''}
     ${inUse.length ? `<section><h3>여기로 들어오는 곳 <em>${inUse.length}</em></h3>${chipList(inUse, e => e.s, u)}</section>` : ''}
     ${outUse.length ? `<section><h3>여기서 나가는 곳 <em>${outUse.length}</em></h3>${chipList(outUse, e => e.t, u)}</section>` : ''}
-    ${u.m.length ? `<section><h3>${u.kind === 'table' || u.kind === 'enum' ? '필드' : '메서드'} <em>${u.m.length}</em></h3><div class="mlist">${u.m.map((m,i) => `<button class="mrow${sm === i ? ' on' : ''}" data-m="${i}"><span class="dot" style="background:${m.route || m.h ? EK.http.c : m.db ? EK.db.c : 'transparent'}"></span><span class="n">${esc(m.k === 'field' ? m.s : m.n)}</span><span class="l">${m.route ? esc(m.route) : m.k === 'field' ? '' : 'L' + m.l + (m.e > m.l ? '–' + m.e : '')}</span></button>${sm === i ? memberDetail(u, m) : ''}`).join('')}</div></section>` : ''}
+    ${u.m.length ? `<section><h3>${u.kind === 'table' || u.kind === 'enum' ? '필드' : '메서드'} <em>${u.m.length}</em></h3><div class="mlist">${u.m.map((m,i) => `<button class="mrow${sm === i ? ' on' : ''}" data-m="${i}"><span class="dot" style="background:${m.rt && m.rt.bad || (m.st && m.st.some(c => c[0] >= 400)) ? RED : m.route || m.h ? EK.http.c : m.db ? EK.db.c : 'transparent'}"></span><span class="n">${esc(m.k === 'field' ? m.s : m.n)}</span><span class="l">${m.rt && m.rt.bad && RT ? `<b>${esc(badText(m.rt, RT.from))}</b> ` : ''}${m.route ? esc(m.route) : m.k === 'field' ? '' : 'L' + m.l + (m.e > m.l ? '–' + m.e : '')}</span></button>${sm === i ? memberDetail(u, m) : ''}`).join('')}</div></section>` : ''}
     ${u.nested ? `<section><h3>안에 든 타입</h3><p class="path">${u.nested.map(esc).join(' · ')}</p></section>` : ''}
     ${u.tests ? `<section><h3>관련 테스트</h3><p class="path">${u.tests.map(esc).join('<br>')}</p></section>` : ''}
     <section class="acts"><button class="act${state.impact && state.impact.root === u.i ? ' on' : ''}" data-act="impact">고치면 영향받는 곳</button><button class="act" data-act="goto">이 위치로 확대</button></section>
@@ -1233,6 +1317,9 @@ function memberDetail(u, m){
   const calls = (m.c||[]).map(ref).join(''), http = (m.h||[]).map(([t,tm,lab]) => `<button class="xrow" data-u="${t}" data-um="${tm}" style="--c:${EK.http.c}"><span class="k">API</span><span class="n">→ ${esc(lab)}<span class="r">${esc(SYS[UNITS[t].sys].name)} · ${esc(UNITS[t].name)}.${esc(UNITS[t].m[tm].n)}</span></span></button>`).join('');
   const db = (m.db||[]).map(([t,op]) => `<button class="chip" data-u="${t}"><i style="--c:${EK.db.c}"></i><span>${esc(UNITS[t].name)}</span><small>${op === 'w' ? '쓰기' : '읽기'}</small></button>`).join('');
   const callers = m.callers.map(ref).join('');
+  const ex = responseExits(u.i, u.m.indexOf(m));
+  const exits = ex.length ? `<div><h3>내려주는 응답 코드 <em>코드에서 찾은 자리 · 부르는 메서드 포함</em></h3><div class="xlink">${ex.slice(0,14).map(x => { const t = UNITS[x.u]; return `<button class="xrow" data-u="${x.u}" data-um="${x.mi}" style="--c:${x.code >= 400 ? RED : OKC}"><span class="k">${x.code}${x.guess ? '?' : ''}</span><span class="n">${esc(t.name)}.${esc(t.m[x.mi].n)} · L${x.line}${x.via ? ` · ${esc(x.via)} 경유` : ''}${x.msg ? `<span class="r">${esc(x.msg)}</span>` : ''}${x.guess ? `<span class="r">예외 이름으로 어림한 코드</span>` : ''}</span></button>`; }).join('')}</div></div>` : '';
+  const rtm = m.rt && RT ? `<div><h3>실측 응답 <em>${esc(RT.window)} · 요청 ${m.rt.n.toLocaleString()}건</em></h3><div class="codes">${codeChips(m.rt.codes, RT.from)}${m.rt.p95 ? `<span class="code">p95 ${m.rt.p95}ms</span>` : ''}</div></div>` : '';
   return `<div class="mdetail"><code>${esc(m.s)}</code>${m.d ? `<p class="src">${esc(m.d)}</p>` : ''}
     ${m.lit ? `<div class="lits">${m.lit.map(t => `<span class="lit">${esc(t)}</span>`).join('')}</div>` : ''}
     ${m.open ? `<p class="note">분석 범위 안에는 이 API를 부르는 곳이 없습니다(열린 접점). 브라우저나 아직 분석하지 않은 다른 시스템이 호출자일 수 있고, 그 저장소를 분석하면 여기에 이어집니다.</p>` : ''}
@@ -1240,7 +1327,8 @@ function memberDetail(u, m){
     ${callers ? `<div><h3>이 메서드를 부르는 곳</h3><div class="chips">${callers}</div></div>` : ''}
     ${calls ? `<div><h3>이 메서드가 부르는 곳</h3><div class="chips">${calls}</div></div>` : ''}
     ${db ? `<div><h3>건드리는 테이블</h3><div class="chips">${db}</div></div>` : ''}
-    ${!http && !callers && !calls && !db && !m.open ? `<p class="note">정적 분석으로 잡힌 호출 관계가 없습니다.</p>` : ''}</div>`;
+    ${rtm}${exits}
+    ${!http && !callers && !calls && !db && !m.open && !exits ? `<p class="note">정적 분석으로 잡힌 호출 관계가 없습니다.</p>` : ''}</div>`;
 }
 function selectUnit(ui, mi=null, fly=false){
   if (state.sel && state.sel.u !== ui && !NAV.back){ NAV.hist.push([state.sel.u, state.sel.m]); if (NAV.hist.length > 60) NAV.hist.shift(); }
@@ -1345,7 +1433,7 @@ function showChanges(){
   for (const [ids, why] of [[MAN.changes.added || [], '추가됨'], [MAN.changes.changed || [], '변경됨']]) for (const id of ids){ const u = byId.get(id); if (u) list.push({u:u.i, s:0, why:[why], m:null}); }
   if (!list.length) return;
   cancelAI(); state.trace = null; state.impact = null; state.sel = null; state.edge = null;
-  state.hits = {q:`최근 변경 (${MAN.previous_version ? '직전 버전 대비' : '첫 분석'})`, list:list.slice(0,60), units:new Set(list.map(x => x.u)), edges:new Set()};
+  state.hits = {q:`최근 변경 (${MAN.previous_version ? '직전 버전 대비' : '첫 분석'})`, kind:'변경', note:'지난 분석 뒤에 추가되거나 바뀐 유닛입니다.', list:list.slice(0,60), units:new Set(list.map(x => x.u)), edges:new Set()};
   computeFocus(); renderTrace(); renderInspector(); $('#qclear').hidden = false; fitUnits(list.map(x => x.u), 0.5);
 }
 async function checkManifest(first){
@@ -1354,6 +1442,75 @@ async function checkManifest(first){
     if (!m || !m.version) return;
     if (first || !MAN) MAN = m; else if (m.version !== MAN.version) manNew = true;
     renderManifest();
+  } catch (e){}
+}
+
+/* ───────────── 요청·응답: 코드가 내려주는 응답 코드(정적)와 접속 로그에서 온 실측(atlas-runtime.json) ───────────── */
+let RT = null, RT_RAW = null;
+const codeChips = (codes, from) => codes.map(([c,n]) => `<span class="code${c >= from ? ' bad' : ''}">${c}<i>×${n.toLocaleString()}</i></span>`).join('');
+const badText = (x, from) => x.codes.filter(c => c[0] >= from).map(([c,n]) => `${c}×${n}`).join(' ');
+/* 메서드 하나에서 출발해, 그것이 부르는 메서드들을 따라가며 응답 코드를 내려주는 자리를 모은다. 다른 시스템의 API 를 부르면 그쪽도 이어서 본다. */
+function responseExits(ui, mi){
+  const out = [], seen = new Set(), q = [[ui, mi, 0, '']];
+  while (q.length && out.length < 40){
+    const [u, m, d, via] = q.shift(), key = u + ':' + m; if (seen.has(key)) continue; seen.add(key);
+    const mem = UNITS[u] && UNITS[u].m[m]; if (!mem) continue;
+    for (const [code, line, msg, guess] of mem.st || []) out.push({u, mi:m, code, line, msg, guess, depth:d, via});
+    if (d < 4) for (const [t,tm] of mem.c || []) q.push([t, tm, d+1, via]);
+    if (d < 2) for (const [t,tm,lab] of mem.h || []) q.push([t, tm, d+1, lab]);
+  }
+  return out;
+}
+function selExits(){ const s = state.sel; if (!s || s.m == null) return []; return s.exits || (s.exits = responseExits(s.u, s.m).filter(x => x.code >= 400)); }
+function applyRuntime(d){
+  for (const u of UNITS){ u.rt = null; for (const m of u.m) m.rt = null; }
+  for (const s of SYSL) s.rtBad = 0; for (const m of MODS) m.rtBad = 0;
+  for (const e of EDGES) e.rt = null; for (const e of SYSE) e.rt = null; for (const e of MODE) e.rt = null;
+  RT = null;
+  if (d && Array.isArray(d.routes) && SCALE === 1){
+    const from = +d.abnormal_from || 400, list = [];
+    for (const r of d.routes){
+      const u = byId.get(r.id); if (!u) continue;
+      let mi = u.m.findIndex(m => m.route === r.route); if (mi < 0) mi = u.m.findIndex(m => m.n === r.m); if (mi < 0) continue;
+      const codes = Object.entries(r.codes || {}).map(([c,n]) => [+c, +n]).filter(c => c[0] >= 100 && c[1] > 0).sort((a,b) => a[0]-b[0]);
+      const n = codes.reduce((a,c) => a + c[1], 0), bad = codes.reduce((a,c) => a + (c[0] >= from ? c[1] : 0), 0); if (!n) continue;
+      const x = {u:u.i, mi, route:String(r.route || u.m[mi].n), n, bad, codes, p95:+r.p95 || 0};
+      u.m[mi].rt = x; u.rt = u.rt || {n:0, bad:0, routes:[]}; u.rt.n += n; u.rt.bad += bad; u.rt.routes.push(x); list.push(x);
+    }
+    const se = new Map(SYSE.map(e => [e.a.id+'|'+e.b.id+'|'+e.g, e])), me = new Map(MODE.map(e => [e.a.idx+'|'+e.b.idx+'|'+e.g, e]));
+    for (const e of EDGES){          // 연결선의 통행량: 그 API 연결이 가리키는 라우트의 실측 합 (어느 쪽이 불렀는지는 로그에 없어 나누지 못한다)
+      if (e.g !== 'http' || !e.routes) continue; const t = UNITS[e.t], a = UNITS[e.s]; if (!t.rt) continue;
+      let n = 0, bad = 0; for (const x of t.rt.routes) if (e.routes.includes(x.route)){ n += x.n; bad += x.bad; }
+      if (!n) continue; e.rt = {n, bad};
+      for (const g of [se.get(a.sys+'|'+t.sys+'|http'), a.module !== t.module ? me.get(a.module.idx+'|'+t.module.idx+'|http') : null]) if (g){ g.rt = g.rt || {n:0, bad:0}; g.rt.n += n; g.rt.bad += bad; }
+    }
+    const badUnits = []; for (const u of UNITS) if (u.rt && u.rt.bad){ u.module.rtBad++; SYS[u.sys].rtBad++; badUnits.push(u); }
+    RT = {from, list:list.sort((a,b) => b.bad-a.bad || b.n-a.n), badUnits:badUnits.sort((a,b) => b.rt.bad-a.rt.bad), total:+d.total||0, matched:+d.matched||0,
+          source:String(d.source||''), window:String(d.window||''), at:String(d.generated||'')};
+  }
+  renderRuntime(); if (state.sel) renderInspector(); invalidate();
+}
+function renderRuntime(){
+  const el = $('#rtbox'); if (!el) return;
+  if (!RT){ el.hidden = true; el.innerHTML = ''; return; }
+  const bad = RT.list.reduce((a,x) => a + x.bad, 0), nb = RT.badUnits.length;
+  el.innerHTML = `실측 응답 · ${esc(RT.source)} · ${esc(RT.window)}<br>요청 ${RT.matched.toLocaleString()}건 · ${bad ? `<b>비정상 ${bad.toLocaleString()}건 · ${nb}곳</b>` : '<span class="ok">비정상 없음</span>'}<br>`
+    + (nb ? `<button class="mini-act" data-act="rt-list" style="color:#FF5A6A;border-color:#FF3B4E">비정상 응답 위치 보기</button>` : '')
+    + `<button class="mini-act" data-act="rt-toggle">${show.rt ? '지도에서 숨기기' : '지도에 표시'}</button>`;
+  el.hidden = false;
+}
+function showAbnormal(){
+  if (!RT || !RT.badUnits.length) return;
+  const list = RT.badUnits.map(u => { const first = u.rt.routes.find(x => x.bad); return {u:u.i, s:u.rt.bad, why:u.rt.routes.filter(x => x.bad).map(x => `${x.route} → ${badText(x, RT.from)}`), m:first ? first.mi : null}; });
+  cancelAI(); state.trace = null; state.impact = null; state.sel = null; state.edge = null;
+  state.hits = {q:'비정상 응답이 나온 곳', kind:'실측 응답', note:`${RT.source} · ${RT.window} 의 접속 기록에서 ${RT.from} 이상의 응답 코드가 나온 API 입니다. 메서드를 고르면 코드에서 그 응답을 내려주는 자리가 붉게 표시됩니다.`, list:list.slice(0,60), units:new Set(list.map(x => x.u)), edges:new Set()};
+  computeFocus(); renderTrace(); renderInspector(); $('#qclear').hidden = false; fitUnits(list.map(x => x.u), 0.5);
+}
+async function checkRuntime(){
+  try {
+    const r = await fetch('atlas-runtime.json', {cache:'no-store'});
+    if (!r.ok){ if (RT_RAW){ RT_RAW = null; applyRuntime(null); } return; }
+    const d = await r.json(); if (!RT_RAW || d.generated !== RT_RAW.generated){ RT_RAW = d; applyRuntime(d); }
   } catch (e){}
 }
 
@@ -1476,6 +1633,8 @@ function bindInput(){
     if (t.dataset.act === 'clear') clearAll();
     else if (t.dataset.act === 'ai-stop') cancelAI(true);
     else if (t.dataset.act === 'changes') showChanges();
+    else if (t.dataset.act === 'rt-list') showAbnormal();
+    else if (t.dataset.act === 'rt-toggle'){ show.rt = !show.rt; renderRuntime(); invalidate(); }
     else if (t.dataset.act === 'reload') location.reload();
     else if (t.dataset.act === 'ai-retry'){ const qq = state.hits ? state.hits.q : state.trace ? state.trace.sc.q : ''; if (qq) runAITrace(qq, !!state.trace); }
     else if (t.dataset.act === 'ai-explain'){ if (state.sel) explainUnit(UNITS[state.sel.u], !!t.dataset.refresh); }
@@ -1561,7 +1720,7 @@ function updateHud(now){
 }
 function frame(now){
   const moving = updateCamera(now);
-  const live = !reduceMotion && (focus || cam.z < Z_SYS*2.3);
+  const live = !reduceMotion && (focus || cam.z < Z_SYS*2.3 || (RT && show.rt) || (state.sel && state.sel.m != null && selExits().length));
   if (dirty || moving || live){ if (lastFrameT && now - lastFrameT < 250) frameMs = frameMs ? frameMs*0.9 + (now - lastFrameT)*0.1 : now - lastFrameT; lastFrameT = now; ins0 = insets(); draw(now); dirty = false; } else lastFrameT = 0;
   updateHud(now);
   requestAnimationFrame(frame);
@@ -1606,7 +1765,7 @@ function load(K){
   resize(); fitAll(true);
   const nm = UNITS.reduce((a,u) => a+u.m.length, 0);
   $('#stats').innerHTML = `<b>${SYSL.length}</b> SYSTEMS · <b>${MODS.length.toLocaleString()}</b> MODULES · <b>${UNITS.length.toLocaleString()}</b> UNITS<br><b>${nm.toLocaleString()}</b> METHODS · <b>${EDGES.length.toLocaleString()}</b> EDGES${K > 1 ? ' · 가상 복제 ×' + K : ''}${(META.sources || []).length ? `<br>기준 ${META.sources.map(x => esc(x.name) + (x.commit ? ' ' + esc(x.branch) + '@' + esc(x.commit) + (x.dirty ? '+수정' : '') : '')).join(' · ')} · ${esc(META.analyzed || '')}` : ''}<span id="manline"></span>`;
-  renderManifest();
+  renderManifest(); applyRuntime(RT_RAW);
   document.querySelectorAll('#scale button').forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.scale === K)));
   loadMs = performance.now() - t0; frameMs = 0; invalidate();
 }
@@ -1621,6 +1780,7 @@ async function boot(){
   addEventListener('hashchange', applyHash); applyHash();
   initAI();
   checkManifest(true); setInterval(() => checkManifest(false), 60000);
+  checkRuntime(); setInterval(checkRuntime, 10000);
 }
 boot().catch(err => { $('#boot').textContent = '데이터를 불러오지 못했습니다: ' + err.message; });
 })();

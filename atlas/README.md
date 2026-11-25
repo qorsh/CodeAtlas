@@ -12,6 +12,7 @@ python3 atlas/atlas.py -w <이름> sync                   # 바뀐 묶음만 다
 python3 atlas/atlas.py -w <이름> status                 # 소스별 기준 커밋, 마지막 결과
 python3 atlas/atlas.py -w <이름> open                   # 이 컴퓨터에서만 열리는 서버를 띄우고 브라우저로 연다
 python3 atlas/atlas.py -w <이름> site                   # 사내 웹 서버에 올릴 정적 파일 묶음 (workspaces/<이름>/site/)
+python3 atlas/atlas.py -w <이름> ingest <접속 로그 | ->   # 실제 요청·응답을 지도에 얹는다 (--follow 로 계속 따라가기)
 ```
 
 `-w <이름>` 은 이 저장소의 `workspaces/<이름>/atlas.config.json` 을 가리킨다(`workspaces/` 는 git 에서 제외돼 있다). 작업 공간을 저장소 밖에 두려면 `--config <설정 파일 경로>` 를 쓴다. 결과와 캐시는 설정 파일이 있는 폴더에 생긴다.
@@ -45,13 +46,26 @@ python3 atlas/atlas.py -w <이름> site                   # 사내 웹 서버에
 ]}
 ```
 
-규칙 종류는 `engine/rules.py` 맨 위에 정리돼 있다: `annotation`, `call`, `code`, `text`, `unit-annotation`, `unit-text`, `service`, `heuristic`.
+규칙 종류는 `engine/rules.py` 맨 위에 정리돼 있다: `annotation`, `call`, `code`, `text`, `unit-annotation`, `unit-text`, `service`, `status`, `heuristic`.
 
 `call` 규칙에서 자주 쓰는 선택 항목
 
 - `lit_method`: `"POST /orders"` 처럼 문자열 안에 메서드가 함께 적힌 꼴을 메서드와 경로로 나눈다.
 - `handler`: 라우트를 등록하는 곳과 처리하는 곳이 다를 때(`mux.HandleFunc("/x", server.Reserve)`), 마지막 인자로 넘긴 메서드를 찾아 거기에 라우트를 붙인다.
 - 문자열을 조립해 곧바로 넘기는 호출(`client.Get(fmt.Sprintf("%s/items/%d", base, id))`)은 엔진이 한 겹 벗겨 바깥 호출을 본다. 규칙에서 따로 할 일은 없다.
+
+### 응답 코드 규칙 (`status`)
+
+어느 메서드가 어떤 상태 코드를 내려주는지 찾는 정규식이다. 첫 묶음이 코드 숫자나 이름(`NOT_FOUND`, `StatusConflict`, `NotFoundException`)이면 된다.
+
+```json
+{"id": "status-const", "type": "status", "regex": "\\bhttp\\.Status([A-Z]\\w+)"}
+{"id": "status-class", "type": "status", "unit": true, "regex": "@ResponseStatus\\(\\s*HttpStatus\\.([A-Z_]+)"}
+```
+
+- `unit: true` 는 타입 선언에 붙은 것일 때 그 타입(예외 클래스)의 코드로 삼는다. 그 예외를 던지는 자리가 모두 그 코드의 자리가 된다.
+- 예외를 던지는 자리(`throw new X(…)`, `raise X(…)`, `orElseThrow(() -> new X(…))`)는 규칙 없이 엔진이 찾는다. X 의 코드는 ① 규칙이 붙인 것 ② 상속한 프레임워크 예외의 이름 ③ `@ExceptionHandler` 가 정한 것 ④ 클래스 이름으로 어림한 것 순서로 정하고, ④ 는 결과에 '추정'으로 표시된다.
+- 결과는 멤버의 `st: [[코드, 줄, 문구, 추정 여부]]` 로 나간다. 문구는 그 문장에 함께 적힌 문자열 하나다.
 
 ### 제품 전용 규칙은 작업 공간에
 
@@ -133,11 +147,29 @@ SITTER_SPECS['go'] = dict(
                  "causes": [{"t": "제목", "d": "설명", "at": "server:PaymentClient#charge"}],
                  "steps": [{"u": "web:api#createOrder", "d": "이 단계에서 일어나는 일"}], "kw": ["payment", "order"]}],
   "alias": {"정기결제": ["subscription", "billing"]},
-  "colors": {"server": "#8FA6FF"}
+  "colors": {"server": "#8FA6FF"},
+  "columns": [["ios", "android"], ["server"], ["db"]]
 }
 ```
 
+`columns` 는 시스템을 놓을 열을 직접 정한다. 없으면 시스템 사이의 연결 방향(부르는 쪽 → 불리는 쪽)으로 자동 배치한다.
+
 유닛은 `시스템id:유닛이름`, 메서드는 `#메서드이름`, API 는 `@GET /경로` 로 가리킨다. `type` 은 `q`(문의), `fix`(수정 요청), `err`(오류) 중 하나다.
+
+## 실측 응답: `ingest`
+
+접속 로그의 요청을 분석해 둔 API(멤버의 `route`)에 맞춰 `atlas-runtime.json` 을 만든다. 화면은 이 파일을 10초마다 다시 읽는다.
+
+```json
+{"generated": "2026-11-26T10:00:00", "source": "access.log", "window": "최근 300초", "total": 125, "matched": 120, "abnormal_from": 400,
+ "routes": [{"id": "inventory-service:Server", "m": "Reserve", "route": "POST /inventory/reserve", "n": 19, "codes": {"204": 12, "409": 4, "500": 3}, "p95": 1440.0}],
+ "unmatched": [["GET /healthz", 5]]}
+```
+
+- 맞추는 법: 쿼리 문자열과 호스트를 떼고, 조각 수와 메서드가 같은 라우트 가운데 글자가 그대로 맞는 조각이 가장 많은 것을 고른다(`/orders/recent` 가 `/orders/{id}` 보다 먼저).
+- 맞는 라우트가 없는 경로는 값(숫자·긴 식별자)을 가린 모양으로 상위 15개만 남긴다. 많이 남으면 `--strip-prefix` 가 필요하거나, 그 API 를 제공하는 코드가 아직 분석되지 않은 것이다.
+- 형식을 자동으로 못 알아보면 설정 파일에 `"runtime": {"regex": "…", "strip_prefix": ["/v1"]}` 를 적어 두고 쓴다.
+- 다른 출처(APM, 게이트웨이 통계)의 숫자를 얹고 싶으면 위 모양의 파일을 직접 만들어 결과 파일 옆에 두면 된다.
 
 ## 여럿이 함께 쓸 때
 
@@ -154,6 +186,7 @@ SITTER_SPECS['go'] = dict(
 - 내장 파서는 주석·문자열 제거와 괄호·들여쓰기 구조에 기댄 근사 분석이다. 매크로, 리플렉션, 의존성 주입 설정처럼 문법에 드러나지 않는 연결은 놓친다.
 - Swift, Kotlin, TypeScript/JavaScript 는 아직 내장 파서로만 읽는다. tree-sitter 명세를 더하면 바꿀 수 있지만, 기존 결과와 달라지는 곳을 `tests/parser_parity.py` 로 확인한 뒤에 바꿔야 한다.
 - 주소를 변수에 담아 두었다가 다른 줄에서 호출하는 코드(`url := ...; http.Get(url)`)는 호출과 주소를 잇지 못한다. 값의 흐름은 따라가지 않는다.
+- 실측 응답은 접속 로그 수준이다. 서버 안의 어느 메서드에서 실패했는지, 요청 한 건이 시스템 사이를 어떻게 지났는지는 분산 추적 기록이 있어야 알 수 있고 아직 읽지 못한다.
 - 유닛 종류(화면·서비스·저장소 등)는 이름 끝말로 어림한다. 이름 규칙이 다른 팀에서는 종류가 덜 맞을 수 있다(연결에는 영향이 없다).
 - 규칙이 없는 프레임워크의 접점은 잡히지 않는다. `sync` 출력의 "호출자 없는 API" 수와 화면의 열린 접점이 빠진 곳을 찾는 실마리다.
 
@@ -165,7 +198,8 @@ SITTER_SPECS['go'] = dict(
 python3 atlas/atlas.py -w shop init
 python3 atlas/atlas.py -w shop add fixtures/shop
 python3 atlas/atlas.py -w shop sync      # tree-sitter 가 있으면 http 6 · db 2 · msg 1 · ext 1, 없으면 Go 를 건너뛰고 http 3 · db 2 · msg 1
-node tests/viewer-smoke.js code-atlas.html workspaces/shop                  # 그 결과로 화면이 끝까지 그려지는지
+python3 atlas/atlas.py -w shop ingest fixtures/shop/logs/access-nginx.txt   # 시험용 접속 로그: 비정상 14건이 3곳에서 나와야 한다
+node tests/viewer-smoke.js code-atlas.html workspaces/shop                  # 그 결과로 화면이 끝까지 그려지는지 (좌표·응답 표시 포함)
 .venv/bin/python tests/parser_parity.py java fixtures/shop/order-service    # 내장 파서와 tree-sitter 의 결과가 같은지 (차이 0건)
 .venv/bin/python tests/parser_parity.py python fixtures/shop/payment-service
 python3 tests/leak_check.py                                                 # 분석 대상의 내용이 저장소에 섞이지 않았는지

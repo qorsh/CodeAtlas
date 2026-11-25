@@ -230,6 +230,7 @@ atlas.config.json
 atlas-data.json
 atlas-manifest.json
 atlas-notes.json
+atlas-runtime.json
 atlas-store/
 /site/
 /screens/

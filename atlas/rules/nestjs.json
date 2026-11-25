@@ -26,6 +26,16 @@
         "required": true
       },
       "unit_kind": "controller"
+    },
+    {
+      "id": "status-const",
+      "type": "status",
+      "regex": "(?<![=!<>]=)(?<![=!<>]= )(?<!case )\\bHttpStatus\\.([A-Z_]+)\\b"
+    },
+    {
+      "id": "status-code",
+      "type": "status",
+      "regex": "@HttpCode\\(\\s*(\\d{3})(?!\\d)"
     }
   ]
 }

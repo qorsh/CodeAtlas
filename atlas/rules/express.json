@@ -15,6 +15,16 @@
       "method": "$2",
       "lit": "^/",
       "unit_kind": "controller"
+    },
+    {
+      "id": "status",
+      "type": "status",
+      "regex": "\\.(?:status|sendStatus)\\(\\s*(\\d{3})(?!\\d)"
+    },
+    {
+      "id": "status-option",
+      "type": "status",
+      "regex": "\\bstatus:\\s*(\\d{3})(?!\\d)"
     }
   ]
 }
