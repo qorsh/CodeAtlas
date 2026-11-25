@@ -4,7 +4,7 @@
   python3 tests/screenshot.py <작업 공간 폴더> <그림을 둘 폴더>
   예) python3 tests/screenshot.py workspaces/shop /tmp/shots
 
-찍는 장면: 전체 보기, 비정상 응답 목록(실측이 있을 때), API 메서드 하나를 고른 가까운 화면.
+찍는 장면: 전체 보기, 비정상 응답 목록(실측이 있을 때), API 메서드 하나를 고른 가까운 화면, 휴대폰 폭에서 설명을 펼친 화면과 접은 화면.
 작업 공간의 분석 결과가 그대로 찍히므로, 문서에 넣을 그림은 fixtures/shop 으로 만든 작업 공간에서만 찍는다.
 """
 import functools
@@ -26,7 +26,11 @@ SHOTS = {
     '1-overview': '',
     '2-abnormal': 'if (T.RT) T.showAbnormal();',
     '3-method': PICK + 'T.selectUnit(u.i, u.m.length ? mi : null, false); T.cam.z = 1.05; T.cam.x = u.x + 330; T.cam.y = u.y + 120; T.invalidate();',
+    '4-phone-method': PICK + 'T.selectUnit(u.i, u.m.length ? mi : null, false); T.cam.z = 0.9; T.cam.x = u.x + 150; T.cam.y = u.y + 260; T.invalidate();',
+    '5-phone-folded': PICK + 'T.selectUnit(u.i, u.m.length ? mi : null, false); document.querySelector(\'[data-act="min-insp"]\').click();'
+                      'T.cam.z = 0.9; T.cam.x = u.x + 150; T.cam.y = u.y + 260; T.invalidate();',
 }
+SIZE = {'4-phone-method': '500,844', '5-phone-folded': '500,844'}        # 나머지는 1440,900. 헤드리스 Chrome 은 폭 500 아래로 줄지 않는다
 
 
 def main():
@@ -57,7 +61,7 @@ def main():
         png = os.path.join(out, name + '.png')
         if os.path.exists(png):
             os.remove(png)
-        subprocess.run([CHROME[0], '--headless=new', '--disable-gpu', '--hide-scrollbars', '--window-size=1440,900', '--force-device-scale-factor=1',
+        subprocess.run([CHROME[0], '--headless=new', '--disable-gpu', '--hide-scrollbars', '--window-size=' + SIZE.get(name, '1440,900'), '--force-device-scale-factor=1',
                         '--user-data-dir=' + os.path.join(out, '.profile'), '--virtual-time-budget=5200', '--screenshot=' + png,
                         f'http://127.0.0.1:{httpd.server_address[1]}/{name}.html'], capture_output=True, text=True, timeout=180)
         print(('찍음   ' if os.path.exists(png) else '실패   ') + png)
