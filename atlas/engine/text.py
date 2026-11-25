@@ -335,7 +335,7 @@ def doc_before(src, comments, pos, lines):
     if not parts:
         return ''
     text = '\n'.join(reversed(parts))
-    text = re.sub(r'^\s*(///?|/\*\*?|\*/|\*)\s?', '', text, flags=re.M)
+    text = re.sub(r'^\s*(///?|/\*\*?|\*/|\*|#+)\s?', '', text, flags=re.M)
     text = re.sub(r'\*/\s*$', '', text)
     text = re.sub(r'\s+', ' ', text).strip()
     if _header_re().match(text) or 'Created by' in text[:120]:      # 파일 머리말(파일 이름·작성자·저작권)은 설명이 아니다

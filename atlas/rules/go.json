@@ -1,0 +1,11 @@
+{
+  "id": "go",
+  "title": "Go · net/http ServeMux, gin·echo·chi 라우터, http 클라이언트, 코드 속 SQL",
+  "langs": ["go"],
+  "rules": [
+    {"id": "servemux", "type": "call", "kind": "http", "role": "provide", "match": "(?:^|\\.)(HandleFunc|Handle)$", "lit": "^((GET|POST|PUT|PATCH|DELETE|HEAD)\\s+)?/", "lit_method": "^(GET|POST|PUT|PATCH|DELETE|HEAD)\\s+(/.*)$", "default_method": "ALL", "handler": true, "unit_kind": "controller"},
+    {"id": "router", "type": "call", "kind": "http", "role": "provide", "match": "^(?!http\\.)(?:.*\\.)?\\w+\\.(GET|POST|PUT|PATCH|DELETE|Get|Post|Put|Patch|Delete)$", "method": "$1", "lit": "^/", "handler": true, "unit_kind": "controller"},
+    {"id": "http-client", "type": "call", "kind": "http", "role": "consume", "match": "(?:^|\\.)(?:http|\\w*[cC]lient|c)\\.(Get|Post|Head|PostForm)$", "method_map": {"Get": "GET", "Post": "POST", "Head": "HEAD", "PostForm": "POST"}, "lit": "^(/|https?://|%s/)"},
+    {"id": "sql", "type": "text", "kind": "db", "role": "consume", "regex": "\\b(FROM|INTO|UPDATE|JOIN)\\s+([a-z_][a-z0-9_]*)\\b", "key": "$2", "style": "sql", "op": {"group": 1, "read": ["FROM", "JOIN"], "unless_before": "DELETE"}}
+  ]
+}

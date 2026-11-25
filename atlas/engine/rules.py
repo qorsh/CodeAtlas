@@ -3,6 +3,7 @@
 규칙 종류
   annotation       멤버에 붙은 어노테이션 → API 제공/호출 (Spring, NestJS, FastAPI, Retrofit, JAX-RS …)
   call             문자열을 인자로 받는 호출 → API 제공/호출, 메시지 발행/구독 (Express, axios, fetch, requests, Kafka …)
+                   lit_method: "POST /x" 처럼 문자열에 메서드가 함께 적힌 꼴 · handler: 마지막 인자로 넘긴 처리 메서드에 라우트를 붙인다
   code / text      정규식. code 는 주석·문자열을 지운 코드에, text 는 원문에 적용 → DB 접근 등
   unit-annotation  유닛에 붙은 어노테이션 → 테이블 제공 (JPA @Entity/@Table …)
   unit-text        유닛 원문 정규식 → 테이블 제공 (SQLAlchemy __tablename__ …)
@@ -98,6 +99,44 @@ def rule_annotation(R, rid, i, u, fi, items):
                         u['kind'] = R['unit_kind']
 
 
+_HANDLER = re.compile(r'^((?:[A-Za-z_$][\w$]*\s*\.\s*)*)([A-Za-z_$][\w$]*)$')
+
+
+def handler_ref(i, u, fi, sc):
+    """라우트를 등록하는 곳과 처리하는 곳이 다를 때(mux.HandleFunc("/x", server.Reserve), router.get('/x', auth, ctrl.list)):
+    호출의 마지막 인자가 이름이면 그 이름의 메서드를 가진 유닛을 찾아 (유닛, 멤버)를 돌려준다. 못 찾거나 여럿이면 None."""
+    code, j, depth, last = fi['code'], sc['end'], 0, sc['end']
+    while j < len(code) and j < sc['end'] + 400:
+        c = code[j]
+        if c in '([{':
+            depth += 1
+        elif c in ')]}':
+            if depth == 0:
+                break
+            depth -= 1
+        elif c == ',' and depth == 0:
+            last = j + 1
+        j += 1
+    m = _HANDLER.match(code[last:j].strip()) if j < len(code) and code[j] == ')' and last > sc['end'] else None
+    if not m:
+        return None
+    recv, name = re.sub(r'[\s.]+$', '', m.group(1)).split('.')[-1].strip(), m.group(2)
+    if not recv or recv in ('this', 'self'):
+        if name in member_names[i]:
+            return i, member_names[i][name][0]
+    pool = set()
+    for t in u['refs']:
+        if isinstance(t, int):
+            pool.update(family_of(t))
+    if not recv:
+        pool.update(kt_funcs.get(name, ()))
+    having = sorted((t, member_names[t][name][0]) for t in pool if t != i and name in member_names[t])
+    if len(having) > 1 and recv:
+        r = norm(recv)
+        having = [h for h in having if r and (r in norm(units[h[0]]['name']) or norm(units[h[0]]['name'].split('+')[0]) in r)] or having
+    return having[0] if len(having) == 1 else None
+
+
 def rule_call(R, rid, i, u, fi, items):
     rx = re.compile(R['match'])
     for sc in u.get('scalls', []):
@@ -106,7 +145,14 @@ def rule_call(R, rid, i, u, fi, items):
         mm = rx.search(sc['chain'])
         if not mm or (R.get('lit') and not re.search(R['lit'], sc['lit'])):
             continue
-        key = template_to_path(sc['lit'], 'js')
+        if sc.get('wrap') and not R.get('allow_wrap', True):
+            continue
+        lit, lit_method = sc['lit'], None
+        if R.get('lit_method'):          # "POST /orders" 처럼 문자열 안에 메서드가 함께 적힌 꼴
+            lm = re.match(R['lit_method'], lit)
+            if lm:
+                lit_method, lit = lm.group(1).upper(), lm.group(2)
+        key = template_to_path(printf_to_path(lit) if sc.get('wrap') else lit, 'js')
         if R.get('kind', 'http') != 'http':
             other_ports.append([R['kind'], R['role'], key, i, sc['mi'], rid])
             rule_hits[rid] += 1
@@ -115,13 +161,14 @@ def rule_call(R, rid, i, u, fi, items):
         if not method and R.get('method_near'):
             near = re.search(R['method_near'], fi['src'][sc['end']:sc['end'] + 220].split(');')[0])
             method = near.group(1).upper() if near else None
-        method = method or R.get('default_method', 'GET')
+        method = lit_method or method or R.get('default_method', 'GET')
         if R['role'] == 'provide':
-            routes.append(dict(method=method, path=_join('', key), unit=i, member=sc['mi'], rule=rid))
-            if sc['mi'] is not None:
-                u['members'][sc['mi']].setdefault('route', f"{method} {_join('', key)}")
+            tu, tm = (handler_ref(i, u, fi, sc) or (i, sc['mi'])) if R.get('handler') else (i, sc['mi'])
+            routes.append(dict(method=method, path=_join('', key), unit=tu, member=tm, rule=rid))
+            if tm is not None:
+                units[tu]['members'][tm].setdefault('route', f"{method} {_join('', key)}")
             if R.get('unit_kind'):
-                u['kind'] = R['unit_kind']
+                units[tu]['kind'] = R['unit_kind']
         else:
             items.append((sc['q'], 'http', [i, sc['mi'], method, key, rid]))
         rule_hits[rid] += 1

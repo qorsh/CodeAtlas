@@ -70,8 +70,19 @@ def load_rules(cfg=None):
     return list(packs.values())
 
 
+def parser_signature():
+    """설치된 tree-sitter 와 문법 패키지의 판. 파서가 바뀌면 결과도 달라질 수 있으므로 캐시 지문에 넣는다."""
+    try:
+        from importlib import metadata
+        found = sorted({f"{d.metadata['Name'].lower().replace('_', '-')}=={d.version}" for d in metadata.distributions()
+                        if (d.metadata['Name'] or '').lower().replace('_', '-').startswith('tree-sitter')})
+        return ' '.join(found) if any(x.startswith('tree-sitter==') for x in found) else ''
+    except Exception:
+        return ''
+
+
 def engine_version(cfg=None):
-    h = hashlib.sha1()
+    h = hashlib.sha1(parser_signature().encode())
     for path in [os.path.join(HERE, rel) for rel in engine_files()] + rule_files(cfg):
         h.update(open(path, 'rb').read())
     return h.hexdigest()[:10]
@@ -84,6 +95,32 @@ def run_group(root, systems, opts):
         path = os.path.join(HERE, rel)
         exec(compile(open(path, encoding='utf-8').read(), path, 'exec'), ns)
     return ns['RESULT']
+
+
+def language_table(parser='auto'):
+    """등록된 언어와 그것을 읽는 파서: {'java': 'tree-sitter', 'swift': '내장', 'go': '문법 없음: tree-sitter-go'}.
+    엔진 머리말과 어댑터 파일만 실행해 보고 알아낸다(소스는 읽지 않는다)."""
+    ns = {'__name__': 'atlas_probe', 'ROOT': '.', 'SYSTEMS': [], 'OPTS': dict(ns='probe', parser=parser)}
+    for rel in [f for f in engine_files() if f not in ENGINE_POST]:
+        path = os.path.join(HERE, rel)
+        exec(compile(open(path, encoding='utf-8').read(), path, 'exec'), ns)
+    used, missing = ns.get('SITTER_USED', {}), ns.get('SITTER_MISSING', {})
+    return {name: 'tree-sitter' if name in used else f'문법 없음: {missing[name]}' if name in missing else '내장' for name in ns['LANGUAGES']}
+
+
+def use_project_venv():
+    """저장소의 .venv 에 tree-sitter 가 깔려 있으면 그 파이썬으로 다시 실행한다.
+    어떤 파이썬으로 부르든 같은 파서로 분석돼야 결과와 캐시가 흔들리지 않는다. ATLAS_NO_VENV=1 이면 하지 않는다."""
+    venv = os.path.join(os.path.dirname(HERE), '.venv')
+    py = next((p for p in (os.path.join(venv, 'bin', 'python'), os.path.join(venv, 'Scripts', 'python.exe')) if os.path.exists(p)), None)
+    if not py or os.environ.get('ATLAS_NO_VENV') or os.path.realpath(sys.prefix) == os.path.realpath(venv):
+        return
+    try:
+        import tree_sitter  # noqa: F401
+        return
+    except ImportError:
+        pass
+    os.execv(py, [py] + sys.argv)
 
 
 # ───────────────────────────── 설정 · 소스 ─────────────────────────────
@@ -455,9 +492,14 @@ def cmd_sync(cfg, args):
             info['prev_commit'] = prev_commits.get(src['name'], '')
             sources.append(info)
         roots = {s['name']: source_root(cfg, s) for s in cfg['sources']}
+        # 문법 패키지가 없어 읽을 수 없는 시스템은 건너뛰고 알린다. 설정이 "parser": "tree-sitter" 면 건너뛰지 않고 멈춘다.
+        table = language_table(cfg.get('parser', 'auto'))
+        skipped = [dict(id=s['id'], lang=s['lang'], need=table[s['lang']].split(': ')[1]) for s in cfg['systems']
+                   if table.get(s['lang'], '').startswith('문법 없음') and cfg.get('parser') != 'tree-sitter']
+        cfg = dict(cfg, systems=[s for s in cfg['systems'] if s['id'] not in {x['id'] for x in skipped}])
         results, report = [], []
         for g in groups_of(cfg):
-            opts = dict(ns=g['ns'], api_hosts=cfg.get('api_hosts', []), rules=rules,
+            opts = dict(ns=g['ns'], api_hosts=cfg.get('api_hosts', []), rules=rules, parser=cfg.get('parser', 'auto'),
                         strings_xml=[p for s in g['systems'] for p in s.get('strings_xml', [])], skip_dirs=cfg.get('skip_dirs', []))
             key, nfiles = group_key(roots[g['source']], g, opts, version)
             cpath = os.path.join(store, 'groups', re.sub(r'[^\w.-]', '_', g['id']) + '.json')
@@ -469,7 +511,9 @@ def cmd_sync(cfg, args):
                 res, status = run_group(roots[g['source']], g['systems'], opts), 'analyzed'
                 write_atomic(cpath, json.dumps(dict(key=key, result=res), ensure_ascii=False))
             results.append((g, res))
-            report.append(dict(id=g['id'], systems=[s['id'] for s in g['systems']], files=nfiles, units=len(res['units']), status=status, ms=int((time.time() - t1) * 1000)))
+            parsers = res.get('stats', {}).get('parsers', {})
+            report.append(dict(id=g['id'], systems=[s['id'] for s in g['systems']], files=nfiles, units=len(res['units']), status=status, ms=int((time.time() - t1) * 1000),
+                               parser='tree-sitter' if parsers and all(v == 'tree-sitter' for v in parsers.values()) else '일부 tree-sitter' if 'tree-sitter' in parsers.values() else '내장'))
         # 데이터에는 '어느 커밋인가'만 넣는다. 직전 커밋은 실행할 때마다 달라질 수 있어 목록표에만 둔다
         records, summary = link(cfg, results, [{k: v for k, v in x.items() if k != 'prev_commit'} for x in sources], rules)
         fp = fingerprints(records)
@@ -483,7 +527,7 @@ def cmd_sync(cfg, args):
         data_hash = hashlib.sha1(re.sub(r'"analyzed":"[^"]*",?', '', body).encode()).hexdigest()[:10]
         unchanged = prev_manifest.get('data_hash') == data_hash
         manifest = dict(name=cfg.get('name', ''), version=prev_manifest.get('version') if unchanged else datetime.datetime.now().strftime('%Y%m%d-%H%M%S') + '-' + data_hash[:6],
-                        built_at=datetime.datetime.now().isoformat(timespec='seconds'), engine=version, data_hash=data_hash, sources=sources, groups=report, summary=summary,
+                        built_at=datetime.datetime.now().isoformat(timespec='seconds'), engine=version, data_hash=data_hash, sources=sources, groups=report, skipped=skipped, summary=summary,
                         changes=prev_manifest.get('changes', changes) if unchanged else {k: v[:400] for k, v in changes.items()},
                         change_counts=prev_manifest.get('change_counts') if unchanged else {k: len(v) for k, v in changes.items()},
                         previous_version=prev_manifest.get('previous_version') if unchanged else prev_manifest.get('version'))
@@ -496,7 +540,9 @@ def cmd_sync(cfg, args):
         moved = f"{s['prev_commit']} → " if s['prev_commit'] and s['prev_commit'] != s['commit'] else ''
         print(f"소스 {s['name']}: " + (f"{s['branch']}@{moved}{s['commit']}{' (미커밋 수정 있음)' if s['dirty'] else ''}" if s['commit'] else 'git 저장소 아님 (현재 폴더 내용 기준)'))
     for r in report:
-        print(f"  묶음 {r['id']:<22} {'다시 분석' if r['status'] == 'analyzed' else '재사용   '} 파일 {r['files']:>4} · 유닛 {r['units']:>4} · {r['ms']}ms")
+        print(f"  묶음 {r['id']:<22} {'다시 분석' if r['status'] == 'analyzed' else '재사용   '} 파일 {r['files']:>4} · 유닛 {r['units']:>4} · {r['ms']:>5}ms · 파서 {r.get('parser', '내장')}")
+    for x in skipped:
+        print(f"  건너뜀 {x['id']}: {x['lang']} 문법이 없습니다. 설치: pip install tree-sitter {x['need']}  (requirements-parsers.txt 참고)")
     print(f"결과: 유닛 {summary['units']} · 메서드 {summary['members']} · 연결 {summary['edges']} {summary['by_kind']}")
     print(f"접점: 제공 API {summary['routes']}개 중 호출자 없는 것 {summary['open_routes']}개 · 호출 후보 {summary['http_candidates']}개")
     if unchanged:
@@ -565,7 +611,7 @@ def detect(root, name):
             found.append(dict(id=base.lower(), name=base, sub='Python', lang='python', roots=[rel(cur)]))
             dirs[:] = []
         elif 'go.mod' in fs:
-            found.append(dict(id=base.lower(), name=base, sub='Go (어댑터 없음)', lang='go', roots=[rel(cur)]))
+            found.append(dict(id=base.lower(), name=base, sub='Go', lang='go', roots=[rel(cur)]))
             dirs[:] = []
     return found
 
@@ -589,17 +635,18 @@ def cmd_add(cfg, args):
             s['id'] = f"{name}-{s['id']}"
             s['ns'] = f"{name}-{s['ns']}"
         taken.add(s['id'])
-    known = {os.path.splitext(os.path.basename(p))[0] for p in glob.glob(os.path.join(HERE, 'langs', '*.py'))} | {'ts', 'js'}
+    table = language_table(cfg.get('parser', 'auto'))
+    note = lambda lang: '   ← 어댑터 없음: 분석에서 빠짐' if lang not in table else f"   ← 문법 없음: pip install tree-sitter {table[lang].split(': ')[1]} 전에는 건너뜀" if table[lang].startswith('문법 없음') else ''
     print(f"소스 {name}: {'git ' + target if is_git else root}")
     for s in systems:
-        print(f"  시스템 {s['id']:<18} {s['sub']:<20} 언어 {s['lang']:<7} 루트 {', '.join(s['roots'][:3])}{' …' if len(s['roots']) > 3 else ''}{'' if s['lang'] in known or s['lang'] == 'typescript' else '   ← 어댑터 없음: 분석에서 빠짐'}")
+        print(f"  시스템 {s['id']:<18} {s['sub']:<20} 언어 {s['lang']:<7} 루트 {', '.join(s['roots'][:3])}{' …' if len(s['roots']) > 3 else ''}{note(s['lang'])}")
     if not systems:
         print('  알아볼 수 있는 시스템이 없습니다. 설정 파일에 직접 적어 주세요.')
     if args.dry_run:
         print('(미리보기라 설정은 바꾸지 않았습니다)')
         return
     cfg['sources'].append(src)
-    cfg['systems'] += [s for s in systems if s['lang'] in known]
+    cfg['systems'] += [s for s in systems if s['lang'] in table]
     save_config(cfg)
     print(f"{cfg['_path']} 에 적었습니다. 이름·루트·모듈 규칙을 손본 뒤 sync 를 실행하세요.")
 
@@ -632,6 +679,7 @@ def cmd_site(cfg, args):
 
 
 def main():
+    use_project_venv()
     ap = argparse.ArgumentParser(description='코드 아틀라스')
     ap.add_argument('--config', default='atlas.config.json')
     sub = ap.add_subparsers(dest='cmd', required=True)

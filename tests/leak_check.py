@@ -5,7 +5,7 @@
   python3 tests/leak_check.py <atlas-data.json 또는 작업 공간 폴더> ...
 
 기준이 되는 것: 작업 공간 설정의 제품 이름·소스 이름·API 호스트, 분석 결과의 유닛·모듈·파일 이름과 API 경로(이상 '확실'),
-메서드 이름과 코드 속 문자열(이상 '참고'). 한 낱말짜리 흔한 이름(Request, index 등)은 우연히 겹치므로 보지 않는다.
+안에 든 타입 이름, 메서드 이름, 코드 속 문자열(이상 '참고'). 한 낱말짜리 흔한 이름(Request, index 등)은 우연히 겹치므로 보지 않는다.
 '확실'이 하나라도 걸리면 1 로 끝난다. '참고'는 사람이 읽고 판단한다.
 """
 import collections
@@ -50,9 +50,9 @@ def collect(workspace):
             for v, kind in ((r['name'], '유닛'), (r.get('mod'), '모듈'), (os.path.basename(r['file']), '파일')):
                 if v and compound(v) and not (kind == '파일' and stem.lower() in COMMON_FILES):
                     strong.setdefault(v, kind)
-            for v in r.get('nested') or []:
+            for v in r.get('nested') or []:              # 안에 든 타입 이름(State, ImportError …)은 흔한 이름이 많아 참고로만 본다
                 if compound(v):
-                    strong.setdefault(v, '중첩 타입')
+                    weak.setdefault(v, '중첩 타입')
             for m in r.get('m', []):
                 if compound(m['n']) and len(m['n']) >= 12:
                     weak.setdefault(m['n'], '메서드')

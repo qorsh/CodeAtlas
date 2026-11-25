@@ -1,0 +1,8 @@
+# 선택 설치. 없어도 내장 파서로 동작한다(Swift, Kotlin, TypeScript/JavaScript, Java, Python, Prisma).
+# 깔면 Java · Python 을 정식 파서로 읽고, Go 처럼 내장 파서가 없는 언어를 분석할 수 있다.
+#   python3 -m venv .venv && .venv/bin/pip install -r requirements-parsers.txt
+# 문법은 언어별 패키지에 들어 있고, 실행 중에 내려받는 것은 없다.
+tree-sitter==0.27.0
+tree-sitter-java==0.23.5
+tree-sitter-python==0.25.0
+tree-sitter-go==0.25.0

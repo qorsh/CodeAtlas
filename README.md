@@ -15,11 +15,12 @@
 |---|---|
 | `code-atlas.html` | 지도 화면. 파일 하나로 된 뷰어이고, 옆에 놓인 `atlas-data.json` 을 읽는다. 어떤 제품의 내용도 들어 있지 않다 |
 | `atlas/` | 분석기. `atlas.py`(명령줄), `langs/`(언어 어댑터), `engine/`(공통 엔진), `rules/`(프레임워크 규칙 팩). 자세한 설명은 [atlas/README.md](atlas/README.md) |
-| `fixtures/shop/` | 시험용 가짜 프로젝트(Java Spring, Python FastAPI, React, Kotlin Retrofit) |
-| `tests/` | 뷰어 연기 시험, 반출 검사 |
+| `fixtures/shop/` | 시험용 가짜 프로젝트(Java Spring, Python FastAPI, Go net/http, React, Kotlin Retrofit) |
+| `tests/` | 뷰어 연기 시험, 파서 비교, 반출 검사 |
+| `requirements-parsers.txt` | 선택 설치(tree-sitter). 없어도 동작한다 |
 | `workspaces/` | 분석 대상별 작업 공간. **git 에서 제외된다** (아래 참고) |
 
-분석기는 층으로 나뉘어 있어 한 프로젝트의 모양에 묶이지 않는다. 새 언어는 어댑터 파일 하나, 새 프레임워크는 규칙 JSON 하나를 더하면 되고, 연결 단계는 언어를 모른다.
+분석기는 층으로 나뉘어 있어 한 프로젝트의 모양에 묶이지 않는다. 새 언어는 tree-sitter 명세 한 덩어리(또는 어댑터 파일 하나), 새 프레임워크는 규칙 JSON 하나를 더하면 되고, 연결 단계는 언어를 모른다.
 
 ## 빨리 써 보기
 
@@ -49,9 +50,19 @@ python3 atlas/atlas.py --config workspaces/shop/atlas.config.json site code-atla
 python3 -m http.server -d workspaces/shop/site 8000
 ```
 
-브라우저에서 `http://localhost:8000` 을 연다. `sync` 출력의 연결 수가 `'http': 3`, `'db': 2`, `'msg': 1` 이면 정상이다.
+브라우저에서 `http://localhost:8000` 을 연다. `sync` 출력의 연결 수가 `'http': 3`, `'db': 2`, `'msg': 1` 이면 정상이다. 이때 Go 로 된 재고 서비스는 "건너뜀"으로 나온다(아래 선택 설치를 하면 함께 분석돼 `'http': 6` 이 된다).
 
 자기 코드를 올릴 때는 `add` 에 폴더나 git 주소를 주면 된다. 시스템 종류(Xcode, Gradle, Nest, Next, Prisma, Spring, Python 등)를 감지해 설정에 적어 주므로, 이름과 루트만 손본 뒤 `sync` 한다. 이미 분석한 소스는 바뀐 묶음만 다시 분석하고, 새로 추가한 소스는 기존 접점(API, 테이블, 토픽)에 연결만 한다.
+
+## 선택 설치: 정식 파서(tree-sitter)
+
+기본은 내장 파서(Swift, Kotlin, TypeScript/JavaScript, Java, Python, Prisma)다. tree-sitter 를 깔면 Java·Python 을 정식 파서로 읽고, Go 처럼 내장 파서가 없는 언어도 분석한다.
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -r requirements-parsers.txt
+```
+
+깔고 나면 따로 할 일은 없다. `atlas.py` 가 `.venv` 를 스스로 찾아 쓴다. 문법은 언어별 패키지에 들어 있고 실행 중에 내려받는 것은 없다.
 
 ## 작업 공간: 분석 대상의 내용은 저장소에 넣지 않는다
 
@@ -105,9 +116,16 @@ node tests/viewer-smoke.js code-atlas.html workspaces/shop
 
 가짜 DOM 으로 뷰어를 띄워 모든 유닛·확대 단계·검색·규모 시험(×10)을 통과하는지 본다. 화면 모양은 실제 브라우저에서 확인한다.
 
+```bash
+.venv/bin/python tests/parser_parity.py java fixtures/shop/order-service
+```
+
+같은 소스를 내장 파서와 tree-sitter 로 각각 분석해 유닛·멤버·접점이 어디서 달라지는지 보여 준다(선택 설치를 했을 때). 시험용 프로젝트에서는 차이가 0건이어야 한다.
+
 ## 알아 둘 한계
 
-- 내장 파서는 주석·문자열 제거와 괄호·들여쓰기 구조에 기댄 근사 분석이다. 매크로, 리플렉션, 의존성 주입 설정처럼 문법에 드러나지 않는 연결은 놓친다.
+- 내장 파서는 주석·문자열 제거와 괄호·들여쓰기 구조에 기댄 근사 분석이다. Swift, Kotlin, TypeScript/JavaScript 는 아직 내장 파서로만 읽는다.
+- 어느 파서든 매크로, 리플렉션, 의존성 주입 설정처럼 문법에 드러나지 않는 연결은 놓친다.
 - 규칙 팩이 없는 프레임워크의 접점은 잡히지 않는다. `sync` 출력의 "호출자 없는 API" 수가 빠진 곳을 찾는 실마리다.
 - 실제 요청·응답 값(런타임 흐름)은 보여 주지 않는다. 코드에서 읽어 낸 구조만 보여 준다.
 

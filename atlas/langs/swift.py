@@ -87,7 +87,7 @@ def parse_swift(sys_id, rel, module):
             units[ui]['doc'] = doc_before(src, fi['comments'], lines.start_of(hs) if not attrs else b['hstart'] + len(code[b['hstart']:hs]) - len(code[b['hstart']:hs].lstrip()), lines)
             local[b['name']] = ui
             block_unit[bi] = ui
-            families[('apple', b['name'])].append(ui)
+            families[(NS[sys_id], b['name'])].append(ui)
     for bi, b in top_types:
         if b['sub'] == 'extension':
             hs = b['hstart'] + b['decl']
@@ -112,7 +112,7 @@ def parse_swift(sys_id, rel, module):
                     ui = add_unit(sys_id, nm, 'tbd', rel, [(hs, b['close'])], module, conforms=conf, attrs=[], decl='extension', base=base.split('.')[0])
                     units[ui]['doc'] = doc_before(src, fi['comments'], lines.start_of(hs), lines)
                     ext_units[base] = ui
-                    families[('apple', base.split('.')[0])].append(ui)
+                    families[(NS[sys_id], base.split('.')[0])].append(ui)
                 else:
                     ui = ext_units[base]
                     units[ui]['ranges'].append((hs, b['close']))

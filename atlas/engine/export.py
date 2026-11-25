@@ -74,5 +74,6 @@ RESULT = dict(
         mtok={str(i): t for i, t in mirror_toks.items()},
     ),
     stats=dict(files=sum(1 for k in file_info if k), units=len(units), members=sum(len(u['members']) for u in units), literals=n_lit,
-               annotations=n_ann, string_calls=n_scall, rule_hits=dict(rule_hits)),
+               annotations=n_ann, string_calls=n_scall, rule_hits=dict(rule_hits),
+               parsers={s['id']: SITTER_USED.get(s['lang'], 'builtin') for s in SYSTEMS}),
 )

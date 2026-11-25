@@ -49,6 +49,8 @@ _KW = re.compile(r'([A-Za-z_]\w*)\s*(=(?!=)|:(?!:))')
 _WORD = re.compile(r'[\w.$]+')
 _CHAIN = re.compile(r'((?:[A-Za-z_$][\w$]*\s*(?:\(\s*\))?\s*[?!]{0,2}\.\s*)*[A-Za-z_$][\w$]*|\.\s*[A-Za-z_$][\w$]*)\s*$')
 _TRIPLE = ('"' * 3, "'" * 3)
+_FORMATTER = re.compile(r'(?:^|\.)(Sprintf|sprintf|format|formatted)$')     # 문자열을 조립해 곧바로 인자로 넘기는 호출
+_PRINTF = re.compile(r'%[-+ #0-9.]*[a-zA-Z]')
 
 
 def lit_text(fi, q, end):
@@ -157,8 +159,19 @@ def anns_from(fi, pos, limit):
     return out
 
 
+def printf_to_path(raw):
+    """조립 호출의 서식 문자열을 경로 패턴으로. %s·%d 는 세그먼트면 :p, 그 밖(맨 앞의 기준 주소 등)이면 버린다."""
+    out, i = '', 0
+    for m in _PRINTF.finditer(raw):
+        out += raw[i:m.start()]
+        out += ':p' if out.endswith('/') else ''
+        i = m.end()
+    return out + raw[i:]
+
+
 def call_ctx(fi, lo, q):
-    """문자열 리터럴(q) 바로 앞 코드를 보고 (호출 사슬, 인자 순번, 이름 인자)를 돌려준다. 호출 인자가 아니면 사슬은 None."""
+    """문자열 리터럴(q) 바로 앞 코드를 보고 (호출 사슬, 인자 순번, 이름 인자, 감싼 조립 호출)을 돌려준다. 호출 인자가 아니면 사슬은 None.
+    client.Get(fmt.Sprintf("%s/items/%d", base, id)) 처럼 조립 호출의 첫 인자면 바깥 호출(client.Get)을 사슬로 본다."""
     code, j, kw = fi['code'], q - 1, None
     while j >= lo and code[j] in ' \t\r\n':
         j -= 1
@@ -171,29 +184,42 @@ def call_ctx(fi, lo, q):
             k -= 1
         kw = code[k + 1:e + 1] or None
         j = k
-    depth, argi = 0, 0
-    while j >= lo:
-        c = code[j]
-        if c in ')]}':
-            depth += 1
-        elif c in '([{':
-            if depth == 0:
-                if c != '[':
-                    break
-                argi = 0            # 목록 리터럴은 한 겹 벗기고 바깥 호출을 찾는다
-            else:
-                depth -= 1
-        elif c == ',' and depth == 0:
-            argi += 1
-        elif c == ';' and depth == 0:
-            return None, None, kw
-        j -= 1
-    if j < lo or code[j] != '(':
-        return None, None, kw
-    m = _CHAIN.search(code[max(lo, j - 160):j])
-    if not m:
-        return None, None, kw
-    return re.sub(r'[\s?!]|\(\s*\)', '', m.group(1)), argi, kw
+    found = None                     # (사슬, 인자 순번, 감싼 조립 호출)
+    for _ in range(2):
+        depth, argi = 0, 0
+        while j >= lo:
+            c = code[j]
+            if c in ')]}':
+                depth += 1
+            elif c in '([{':
+                if depth == 0:
+                    if c != '[':
+                        break
+                    argi = 0            # 목록 리터럴은 한 겹 벗기고 바깥 호출을 찾는다
+                else:
+                    depth -= 1
+            elif c == ',' and depth == 0:
+                argi += 1
+            elif c == ';' and depth == 0:
+                j = lo - 1
+                break
+            j -= 1
+        if j < lo or code[j] != '(':
+            break
+        base = max(lo, j - 160)
+        m = _CHAIN.search(code[base:j])
+        if not m:
+            break
+        chain = re.sub(r'[\s?!]|\(\s*\)', '', m.group(1))
+        if found is None and argi == 0 and _FORMATTER.search(chain):
+            found = (chain, argi, None)                 # 바깥 호출을 못 찾으면 이 조립 호출 자체가 답이다
+            j = base + m.start(1) - 1
+            continue
+        found = (chain, argi, found[0] if found else None)
+        break
+    if found is None:
+        return None, None, kw, None
+    return found[0], found[1], kw, found[2]
 
 
 n_ann = n_scall = 0
@@ -220,7 +246,7 @@ for i, u in enumerate(units):
                 continue
             mi = member_at(u, q)
             lo = max(u['members'][mi]['a'] if mi is not None else ra, q - 600)
-            chain, argi, kw = call_ctx(fi, lo, q)
-            sc.append(dict(q=q, end=end, lit=lit_text(fi, q, end), chain=chain, argi=argi, kw=kw, mi=mi))
+            chain, argi, kw, wrap = call_ctx(fi, lo, q)
+            sc.append(dict(q=q, end=end, lit=lit_text(fi, q, end), chain=chain, argi=argi, kw=kw, mi=mi, wrap=wrap))
     u['scalls'] = sc
     n_scall += len(sc)

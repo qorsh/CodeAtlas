@@ -15,3 +15,8 @@ export async function createOrder(customerId: number, amount: number): Promise<O
 export async function cancelOrder(id: number): Promise<void> {
   await fetch(`/api/orders/${id}/cancel`, { method: 'POST' });
 }
+
+export async function fetchStock(sku: string): Promise<number> {
+  const response = await fetch(`/inventory/${sku}`);
+  return (await response.json()).quantity;
+}
