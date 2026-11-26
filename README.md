@@ -79,7 +79,8 @@ python3 atlas/atlas.py -w myproduct open
 ```
 
 - 모바일 앱은 앱 이름으로 표시한다(`마이숍 iOS`, `마이숍 Android`). 화면에 보이는 이름(iOS 의 표시 이름, Android 의 `app_name`)을 먼저 찾고 없으면 프로젝트 이름을 쓴다. 이름은 설정 패널에서 고칠 수 있다.
-- `add` 는 폴더를 훑어 시스템 종류(Xcode, Gradle, Nest, Next, Prisma, Spring, Python, Go 등)를 감지하고 `workspaces/myproduct/atlas.config.json` 에 적는다. 이름과 루트가 어색하면 그 파일을 고친다. 감지하지 못한 것은 [atlas/README.md](atlas/README.md) 의 설정 형식대로 직접 적는다.
+- Flutter 프로젝트(`pubspec.yaml`)는 시스템 하나로 잡는다. 안에 든 `android/` · `ios/` 껍데기는 따로 잡지 않고, 이름은 앱의 표시 이름을 쓴다.
+- `add` 는 폴더를 훑어 시스템 종류(Xcode, Gradle, Flutter, Nest, Next, Prisma, Spring, Python, Go 등)를 감지하고 `workspaces/myproduct/atlas.config.json` 에 적는다. 이름과 루트가 어색하면 그 파일을 고친다. 감지하지 못한 것은 [atlas/README.md](atlas/README.md) 의 설정 형식대로 직접 적는다.
 - 코드가 바뀌면 `sync` 만 다시 돌린다. 바뀐 묶음만 다시 분석하고, 나중에 추가한 소스는 기존 접점(API, 테이블, 토픽)에 연결만 한다. 폴더 소스는 읽기만 하므로 최신으로 당기는 것은 직접 하거나 `sync --pull` 을 쓴다.
 - `open` 은 이 컴퓨터(127.0.0.1)에서만 열리는 서버를 띄운다. 열어 둔 채 다른 터미널에서 `sync` 하면 화면에 새 버전 알림이 뜬다.
 - 여럿이 볼 곳에 올릴 때는 `site` 로 만든 `workspaces/myproduct/site/` 폴더를 사내 웹 서버(로그인 뒤)에 둔다.
@@ -117,8 +118,9 @@ python3 atlas/atlas.py -w myproduct diagnose
 
 - **지도에서는 주황 점선으로 표시한다.** 선이 없다고 관계가 없는 것이 아니라 분석기가 그 연결을 읽지 못한 것일 수 있기 때문이다. 요청을 처리하는 곳(API)은 있는데 부르는 곳을 하나도 찾지 못한 서버와, 호출을 읽지 못한 앱은 시스템 상자에 주황 점선 테두리와 "연결을 찾지 못함"이 붙고 왼쪽 위 상자와 설정 메뉴에 이유가 나온다. 부르는 곳 없는 API 하나하나는 유닛 카드 왼쪽의 끊긴 선(주황 점선과 빈 동그라미, 개수)으로 보인다.
 - **경로 앞부분만 다른 경우**(게이트웨이나 WAS 가 붙이는 컨텍스트 경로, 기준 주소에 든 `/api`)는 자동으로 맞춘다. 같은 접두어를 떼거나 붙였을 때 맞는 호출이 여럿일 때만 그렇게 하고, 무엇을 맞췄는지 진단에 적는다. 자동으로 안 맞으면 설정 패널에서 서버의 "경로 접두어"를 적는다.
-- **규칙이 없는 방식은 도구가 찾아서 보여 준다("읽지 못한 꼴").** 경로처럼 생긴 문자열이 어노테이션이나 호출의 인자로 놓여 있는데 어느 규칙도 읽지 않은 자리를 꼴별로 모은다(`어노테이션 @Endpoint · 132개 · 예: /push/list`). 설정 패널에서 그 꼴을 골라 "API 정의로 읽기"나 "API 호출로 읽기"를 누르면 그 작업 공간의 규칙(`rules/custom.json`)이 만들어지고, 다시 분석하면 이어진다. AI 를 쓰지 않으므로 코드가 밖으로 나가지 않는다.
-- **API 나 호출을 아예 못 읽은 경우**는 그 프레임워크의 규칙이 없는 것이다. 읽을 수 있는 서버 API 는 Spring MVC 어노테이션, JAX-RS(`@Path`), NestJS, Express, FastAPI·Flask, Go 이고, 앱 호출은 Retrofit 어노테이션, axios·fetch, requests, 그리고 모바일 앱 코드에 적힌 경로 문자열이다. 모바일 앱(Swift·Kotlin·Java)은 통신 라이브러리의 호출 꼴을 몰라도, 코드에 적힌 `"/a/b.do"` · `"a/b"` · `"https://주소/a/b"` 같은 문자열을 호출 후보로 건져 서버 API 와 경로가 같은 것만 잇는다. 그래서 경로를 상수에 모아 두거나 주소에 더해 쓰는 앱도 이어진다. 그 밖의 것은 `workspaces/myproduct/rules/*.json` 에 규칙을 더한다([atlas/README.md](atlas/README.md)).
+- **자가 수리: 맞아떨어지면 스스로 읽는다.** 규칙이 없는 방식으로 쓴 자리를 "API 정의로 본다면" · "API 호출로 본다면"으로 실제로 해 보고, 지금까지 못 이은 호출이 여럿 이어지는 쪽이 있으면 그 가정을 받아들인다(서버 쪽을 읽고 나면 그것을 부르는 쪽도 이어서 읽는다). 분석할 때마다 다시 판단하고, 무엇을 스스로 읽었는지는 `sync` 출력과 설정 패널의 "스스로 읽은 꼴"에 나온다. 틀렸으면 거기서 끈다. 통째로 끄려면 설정 파일에 `"self_repair": false` 를 적는다.
+- **규칙이 없는 방식은 도구가 찾아서 보여 준다("읽지 못한 꼴").** 맞아떨어지는 상대가 없어 스스로 읽지 못한 것만 여기에 남는다. 경로가 아닐 가능성이 큰 후보는 접어 두고, 경로가 아닌 것은 "무시"로 목록에서 뺀다. 경로처럼 생긴 문자열이 어노테이션이나 호출의 인자로 놓여 있는데 어느 규칙도 읽지 않은 자리를 꼴별로 모은다(`어노테이션 @Endpoint · 132개 · 예: /push/list`). 설정 패널에서 그 꼴을 골라 "API 정의로 읽기"나 "API 호출로 읽기"를 누르면 그 작업 공간의 규칙(`rules/custom.json`)이 만들어지고, 다시 분석하면 이어진다. AI 를 쓰지 않으므로 코드가 밖으로 나가지 않는다.
+- **API 나 호출을 아예 못 읽은 경우**는 그 프레임워크의 규칙이 없는 것이다. 읽을 수 있는 서버 API 는 Spring MVC 어노테이션, JAX-RS(`@Path`), NestJS, Express, FastAPI·Flask, Go 이고, 앱 호출은 Retrofit 어노테이션, dio·http(Dart), axios·fetch, requests, 그리고 모바일 앱 코드에 적힌 경로 문자열이다. 모바일 앱(Swift·Kotlin·Java·Dart)은 통신 라이브러리의 호출 꼴을 몰라도, 코드에 적힌 `"/a/b.do"` · `"a/b"` · `"https://주소/a/b"` 같은 문자열을 호출 후보로 건져 서버 API 와 경로가 같은 것만 잇는다. 그래서 경로를 상수에 모아 두거나 주소에 더해 쓰는 앱도 이어진다. 그 밖의 것은 `workspaces/myproduct/rules/*.json` 에 규칙을 더한다([atlas/README.md](atlas/README.md)).
 
 ## 요청·응답 흐름과 비정상 응답
 
@@ -150,7 +152,7 @@ python3 atlas/atlas.py -w shop ingest fixtures/shop/logs/access-nginx.txt
 
 ## 선택 설치: 정식 파서(tree-sitter)
 
-기본은 내장 파서(Swift, Kotlin, TypeScript/JavaScript, Java, Python, Prisma)다. tree-sitter 를 깔면 Java·Python 을 정식 파서로 읽고, Go 처럼 내장 파서가 없는 언어도 분석한다.
+기본은 내장 파서(Swift, Kotlin, Dart, TypeScript/JavaScript, Java, Python, Prisma)다. tree-sitter 를 깔면 Java·Python 을 정식 파서로 읽고, Go 처럼 내장 파서가 없는 언어도 분석한다.
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements-parsers.txt
@@ -245,6 +247,8 @@ node tests/ui-check.js /tmp/atlas-ui
 ## 알아 둘 한계
 
 - 이 도구는 코드를 규칙으로 읽는다. 서버 API 는 프레임워크마다 규칙이 있어야 읽고, 앱 호출은 코드에 적힌 경로 문자열에 기댄다. 규칙에 없는 방식으로 쓴 코드는 읽지 못하고, 그때는 선이 그려지지 않는다. 읽지 못한 곳은 연결 진단과 지도의 주황 점선으로 드러나게 했지만, 드러난 뒤에 규칙을 더하는 것은 사람이 해야 한다.
+- Dart(Flutter) 어댑터는 시험용 앱과 공개 패키지 27개로만 확인했다. 실제 Flutter 앱에서는 아직 검증하지 못했다.
+- 자가 수리는 양쪽이 지도 안에 있을 때만 동작한다. 부르는 쪽이나 불리는 쪽이 지도에 없으면 맞아떨어질 상대가 없어 스스로 읽지 못하고 "읽지 못한 꼴"로 남는다.
 - 내장 파서는 주석·문자열 제거와 괄호·들여쓰기 구조에 기댄 근사 분석이다. Swift, Kotlin, TypeScript/JavaScript 는 아직 내장 파서로만 읽는다.
 - 어느 파서든 매크로, 리플렉션, 의존성 주입 설정처럼 문법에 드러나지 않는 연결은 놓친다.
 - 규칙 팩이 없는 프레임워크의 접점은 잡히지 않는다. `sync` 출력의 "호출자 없는 API" 수가 빠진 곳을 찾는 실마리다.

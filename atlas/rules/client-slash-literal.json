@@ -6,7 +6,8 @@
     "js",
     "swift",
     "kotlin",
-    "java"
+    "java",
+    "dart"
   ],
   "auto": false,
   "rules": [

@@ -1,0 +1,27 @@
+{
+  "id": "dart-clients",
+  "title": "Dart·Flutter 의 서버 호출 (dio · http · Uri.parse)",
+  "langs": [
+    "dart"
+  ],
+  "rules": [
+    {
+      "id": "dio",
+      "type": "call",
+      "kind": "http",
+      "role": "consume",
+      "match": "(?i)(?:^|\\.)_?\\w*(dio|client|api|http|remote|network|service)\\w*\\.(get|post|put|delete|patch|head)(?:Uri)?$",
+      "method": "$2",
+      "lit": "^(/|https?://|[A-Za-z{$])"
+    },
+    {
+      "id": "uri",
+      "type": "call",
+      "kind": "http",
+      "role": "consume",
+      "match": "(?:^|\\.)Uri\\.(parse|tryParse)$",
+      "default_method": "GET",
+      "lit": "^(/|https?://|[A-Za-z{$])"
+    }
+  ]
+}

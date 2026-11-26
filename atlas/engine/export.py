@@ -78,6 +78,7 @@ RESULT = dict(
         mtok={str(i): t for i, t in mirror_toks.items()},
         hosts=host_mentions,
         unread=[[k[0], k[1], k[2], k[3], v[0], v[1], sorted(v[2].items(), key=lambda kv: -kv[1])[:5]] for k, v in sorted(unread.items(), key=lambda kv: -kv[1][0])][:60],
+        unread_sites=[[kind, name, argi, i, _m(i, mi), v, above] for kind, name, argi, i, mi, v, above in unread_sites][:6000],
     ),
     stats=dict(files=sum(1 for k in file_info if k), units=len(units), members=sum(len(u['members']) for u in units), literals=n_lit,
                annotations=n_ann, string_calls=n_scall, status_sites=n_status, rule_hits=dict(rule_hits),

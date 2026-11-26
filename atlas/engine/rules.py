@@ -376,17 +376,18 @@ def heur_slash_literal(R, rid, i, u, fi, items):
     """'/api/orders' 처럼 슬래시로 시작하는 문자열 전부를 후보로 본다. 실제 라우트와 맞는 것만 연결 단계에서 남는다.
     모바일 앱(Swift·Kotlin·Java)은 경로를 상수에 모아 두거나 주소에 더해 쓰는 일이 많아, 통신 라이브러리의 호출 꼴을 몰라도 이 그물로 잡는다.
     그래서 그쪽에서는 슬래시 없이 시작하는 경로("am/menu/list.do")와 주소가 통째로 적힌 문자열("https://host/x/y")도 함께 건진다."""
-    src, app = fi['src'], fi['lang'] in ('swift', 'kotlin', 'java')
+    src, app = fi['src'], fi['lang'] in ('swift', 'kotlin', 'java', 'dart')
+    spans = [an['span'] for m in u['members'] for an in m.get('anns', [])] + [an['span'] for an in u.get('anns', [])]      # 어노테이션 인자 안의 문자열은 어노테이션 규칙이 읽는다(@POST("/x") 를 GET 호출로 한 번 더 세지 않게)
     for a, b in u['ranges']:
         for q, end in fi['strings']:
-            if not (a <= q <= b) or src[q] not in '\'"`':
+            if not (a <= q <= b) or src[q] not in '\'"`' or any(lo <= q < hi for lo, hi in spans):
                 continue
             raw = src[q + 1:end - 1]
             if '.html' in raw or ' ' in raw.split('${')[0]:
                 continue
             if not re.match(r'/[A-Za-z]' if app else r'/[a-z]', raw) and not (app and (_URL_PATH.match(raw) or (_REL_PATH.match(raw) and not _MIME.match(raw)))):
                 continue
-            path = template_to_path(raw, 'kotlin' if fi['lang'] in ('kotlin', 'java') else 'js')
+            path = template_to_path(raw, 'kotlin' if fi['lang'] in ('kotlin', 'java', 'dart') else 'js')
             near = src[end:end + 220]
             if path.endswith('/') and near.lstrip().startswith('+'):
                 path += ':p'
@@ -455,18 +456,24 @@ def _unread(sys_id, kind, name, argi, value, beside=()):
         t[2][b] = t[2].get(b, 0) + 1
 
 
-for u in units:
+unread_sites = []   # 읽지 못한 자리 하나하나: [종류, 이름, 인자 번호, 유닛, 멤버|None, 문자열, 클래스에 붙은 같은 어노테이션의 경로(접두)]
+_vals = lambda an: an['pos'] + [x for k in ('value', 'path', 'url', 'uri') for x in an['kw'].get(k, [])]
+for i, u in enumerate(units):
     if not u['file'] or is_schema(u):
         continue
     all_anns = [x for m in u['members'] for x in m.get('anns', [])] + list(u.get('anns', []))
     in_ann = lambda q: any(an['span'][0] <= q < an['span'][1] for an in all_anns)       # 어노테이션 인자 안의 문자열은 어노테이션 꼴로만 센다
-    for group in [m.get('anns', []) for m in u['members']] + [u.get('anns', [])]:
+    for mi, group in [(k, m.get('anns', [])) for k, m in enumerate(u['members'])] + [(None, u.get('anns', []))]:
         for an in group:
             if an.get('_used'):
                 continue
-            for v in an['pos'] + [x for k in ('value', 'path', 'url', 'uri') for x in an['kw'].get(k, [])]:
+            short = an['name'].split('.')[-1]
+            for v in _vals(an):
                 if _pathy(v):
-                    _unread(u['sys'], 'ann', an['name'].split('.')[-1], 0, v, [o['name'].split('.')[-1] for o in group if o is not an])
+                    _unread(u['sys'], 'ann', short, 0, v, [o['name'].split('.')[-1] for o in group if o is not an])
+                    if mi is not None:
+                        above = next((x for o in u.get('anns', []) if o['name'].split('.')[-1] == short for x in _vals(o)), '')
+                        unread_sites.append(['ann', short, 0, i, mi, v, above])
     for sc in u.get('scalls', []):
         if sc.get('_used') or not sc['chain'] or sc['kw'] or not _pathy(sc['lit']) or in_ann(sc['q']):
             continue
@@ -474,3 +481,4 @@ for u in units:
         if not parts or _NOISE_CALL.match(parts[-1]) or not re.match(r'[A-Za-z_]\w*$', parts[-1]):
             continue
         _unread(u['sys'], 'call', '.'.join(parts[-2:]), sc['argi'] or 0, sc['lit'])
+        unread_sites.append(['call', '.'.join(parts[-2:]), sc['argi'] or 0, i, sc['mi'], sc['lit'], ''])

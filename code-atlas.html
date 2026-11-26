@@ -1427,9 +1427,10 @@ const pendingCount = () => SCALE === 1 ? UNITS.reduce((a,u) => a + (u.pend ? u.p
 function renderPending(){
   const el = $('#pendbox'); if (!el) return;
   const n = pendingCount(), off = SCALE === 1 && META.offmap ? META.offmap.length : 0, cuts = cutSystems().length;
-  const sum = (SCALE === 1 && MAN && MAN.summary) || {}, none = (sum.findings || []).some(f => f.kind === 'no-routes'), un = (sum.unread || []).length;      // 서버 API 를 통째로 못 읽은 경우, 규칙이 없는 방식
-  if (!n && !off && !cuts && !none && !un){ el.hidden = true; el.innerHTML = ''; return; }
+  const sum = (SCALE === 1 && MAN && MAN.summary) || {}, none = (sum.findings || []).some(f => f.kind === 'no-routes'), un = (sum.unread || []).filter(x => !x.weak).length, auto = (sum.auto || []).length;      // 서버 API 를 통째로 못 읽은 경우, 규칙이 없는 방식, 스스로 읽은 꼴
+  if (!n && !off && !cuts && !none && !un && !auto){ el.hidden = true; el.innerHTML = ''; return; }
   el.innerHTML = (none ? `<b>서버 API 를 하나도 읽지 못했습니다</b><br>` : '') + (cuts ? `<b>연결을 찾지 못한 시스템 ${cuts}곳</b><br>` : '') + (un ? `<b>읽지 못한 꼴 ${un}가지</b> · 규칙으로 만들 수 있습니다<br>` : '')
+    + (auto ? `<span class="ok">스스로 읽은 꼴 ${auto}가지</span><br>` : '')
     + (n ? `<b>확인이 필요한 호출 ${n}</b><br>` : '') + (off ? `지도에 없는 주소로 가는 호출 ${off}곳<br>` : '')
     + (cuts || none || un ? `<button class="mini-act" data-act="cuts" style="color:#FFB454;border-color:#FFB454">이유 보기</button>` : '')
     + (n ? `<button class="mini-act" data-act="pending" style="color:#FFB454;border-color:#FFB454">목록 보기</button>` : '') + (API.ok ? `<button class="mini-act" data-act="cfg">설정</button>` : '');
@@ -1619,7 +1620,7 @@ function edgePanel(e){
 /* ───────────── 설정 패널 ─────────────
    atlas.py open 으로 띄운 로컬 서버에서만 켜진다(정적 파일로 올린 화면이나 아티팩트에서는 단추가 보이지 않는다).
    터미널 명령으로 하던 일(폴더 추가, 다시 분석, 로그 넣기)과 한 지도에 여러 제품을 둘 때 필요한 설정(서버 주소, 레거시, 부르는 서버)을 여기서 한다. */
-const CFG = {view:'main', ls:null, pre:null, err:'', msg:'', dirty:false, ext:null, timer:null, confirm:null};
+const CFG = {view:'main', ls:null, pre:null, err:'', msg:'', dirty:false, ext:null, timer:null, confirm:null, weak:false};
 const lastDir = v => { try { if (v) sessionStorage.setItem('atlas-ls', v); return sessionStorage.getItem('atlas-ls') || ''; } catch (e){ return ''; } };
 async function initApi(){
   try { const r = await fetch('api/state', {cache:'no-store'}); if (!r || !r.ok) return; const d = await r.json(); if (d && d.token){ API.ok = true; API.token = d.token; API.st = d; } } catch (e){}
@@ -1685,12 +1686,17 @@ function renderConfig(){
   // 읽지 못한 꼴: 경로처럼 생긴 문자열이 어노테이션·호출 인자로 놓여 있는데 어느 규칙도 읽지 않은 자리. 골라서 규칙으로 만든다
   const un = st.summary.unread || [], cu = st.custom || [], what = x => x.kind === 'ann' ? '어노테이션 @' + esc(x.name) : '호출 ' + esc(x.name) + '(…)' + (x.argi ? ` ${x.argi + 1}번째 인자` : '');
   const pickStyle = on => on ? ' style="color:var(--holo);border-color:var(--holo)"' : '';
-  const unRows = un.map((x, i) => { const made = cu.find(r => r.sys === x.sys && r.kind === x.kind && r.name === x.name && (r.argi || 0) === (x.argi || 0));
-    return `<div class="crow"><span class="nm">${what(x)}<small>${esc(sysName(x.sys))} · 경로 문자열 ${x.n}개 · 예: ${x.ex.map(esc).join(' · ')}${x.beside && x.beside.length ? ' · 함께 붙은 것: ' + x.beside.map(([b, k]) => '@' + esc(b) + ' ' + k).join(', ') : ''}${made ? ` · ${made.role === 'provide' ? 'API 정의' : 'API 호출'}로 읽게 했습니다. 다시 분석하면 반영됩니다` : ''}</small></span>${made ? '' : `<button class="mini-act" data-c="rule" data-role="provide" data-i="${i}"${pickStyle(x.hint === 'provide')}>API 정의로 읽기</button><button class="mini-act" data-c="rule" data-role="consume" data-i="${i}"${pickStyle(x.hint === 'consume')}>API 호출로 읽기</button>`}</div>`; }).join('');
+  const autos = st.summary.auto || [], offs = st.link.auto_off || [], strongUn = un.filter(x => !x.weak), weakN = un.length - strongUn.length;
+  const autoRows = autos.map(a => `<div class="crow"><span class="nm">${what(a)}<small>${esc(sysName(a.sys))} · ${a.n}개를 ${a.role === 'provide' ? 'API 정의' : 'API 호출'}로 읽음 · 그렇게 보니 호출 ${a.gain}개가 이어짐</small></span><button class="mini-act" data-c="auto" data-act="off" data-v="${esc(a.id)}">끄기</button></div>`).join('')
+    + offs.map(id => { const [sid, kind, name] = id.split('|'); return `<div class="crow"><span class="nm">${what({kind, name, argi:0})}<small>${esc(sysName(sid))} · 스스로 읽지 않게 꺼 둠</small></span><button class="mini-act" data-c="auto" data-act="on" data-v="${esc(id)}">다시 켜기</button></div>`; }).join('');
+  const unRows = un.map((x, i) => { if (x.weak && !CFG.weak) return ''; const made = cu.find(r => r.sys === x.sys && r.kind === x.kind && r.name === x.name && (r.argi || 0) === (x.argi || 0));
+    return `<div class="crow"><span class="nm">${what(x)}<small>${esc(sysName(x.sys))} · 경로 문자열 ${x.n}개 · 예: ${x.ex.map(esc).join(' · ')}${x.beside && x.beside.length ? ' · 함께 붙은 것: ' + x.beside.map(([b, k]) => '@' + esc(b) + ' ' + k).join(', ') : ''}${made ? ` · ${made.role === 'provide' ? 'API 정의' : 'API 호출'}로 읽게 했습니다. 다시 분석하면 반영됩니다` : ''}</small></span>${made ? '' : `<button class="mini-act" data-c="rule" data-role="provide" data-i="${i}"${pickStyle(x.hint === 'provide')}>API 정의로 읽기</button><button class="mini-act" data-c="rule" data-role="consume" data-i="${i}"${pickStyle(x.hint === 'consume')}>API 호출로 읽기</button><button class="mini-act" data-c="auto" data-act="ignore" data-v="${esc(x.id)}">무시</button>`}</div>`; }).join('');
   const cuRows = cu.map(r => `<div class="crow"><span class="nm">${what(r)}<small>${esc(sysName(r.sys))} · ${r.role === 'provide' ? 'API 정의로 읽음' : 'API 호출로 읽음'}</small></span><button class="mini-act" data-c="rule-remove" data-v="${esc(r.id)}">지우기</button></div>`).join('');
-  const unread = un.length || cu.length ? `<section><h3${un.length ? ' style="color:#FFB454"' : ''}>읽지 못한 꼴 <em>${un.length ? `규칙이 없는 방식 ${un.length}가지` : '만든 규칙'}</em></h3>
-      ${un.length ? `<p class="note" style="margin-bottom:6px">경로처럼 생긴 문자열이 놓여 있는데 어느 규칙도 읽지 않은 자리입니다. 서버가 API 를 정의하는 꼴이면 "API 정의로", 다른 서버를 부르는 꼴이면 "API 호출로"를 고르세요. 밝게 표시한 쪽이 어림한 답입니다.</p>${unRows}` : ''}
-      ${cuRows ? `<p class="note" style="margin:8px 0 4px">만든 규칙 (이 작업 공간의 rules/custom.json)</p>${cuRows}` : ''}</section>` : '';
+  const unread = (autoRows ? `<section><h3>스스로 읽은 꼴 <em>자가 수리 ${autos.length}</em></h3><p class="note" style="margin-bottom:6px">규칙이 없는 방식이지만, API 로(또는 호출로) 보았더니 못 잇던 호출이 여럿 이어져서 스스로 받아들인 것입니다. 틀렸으면 끄세요.</p>${autoRows}</section>` : '')
+    + (un.length || cu.length ? `<section><h3${strongUn.length ? ' style="color:#FFB454"' : ''}>읽지 못한 꼴 <em>${strongUn.length ? `규칙이 없는 방식 ${strongUn.length}가지` : un.length ? '경로가 아닐 가능성이 큰 것만 남음' : '만든 규칙'}</em></h3>
+      ${strongUn.length || CFG.weak ? `<p class="note" style="margin-bottom:6px">경로처럼 생긴 문자열이 놓여 있는데 어느 규칙도 읽지 않았고, 맞아떨어지는 상대도 없어 스스로 읽지 못한 자리입니다. 서버가 API 를 정의하는 꼴이면 "API 정의로", 다른 서버를 부르는 꼴이면 "API 호출로", 경로가 아니면 "무시"를 고르세요. 밝게 표시한 쪽이 어림한 답입니다.</p>${unRows}` : ''}
+      ${weakN ? `<div class="acts" style="margin-top:8px"><button class="act" data-c="weak">${CFG.weak ? '약한 후보 접기' : `경로가 아닐 가능성이 큰 후보 ${weakN}가지 보기`}</button></div>` : ''}
+      ${cuRows ? `<p class="note" style="margin:8px 0 4px">만든 규칙 (이 작업 공간의 rules/custom.json)</p>${cuRows}` : ''}</section>` : '');
   el.innerHTML = head + `<div class="side-body">${top}
     <section><h3>소스 폴더 <em>${st.sources.length}</em></h3>${src}<div class="acts" style="margin-top:10px"><button class="act" data-c="open-add">폴더 추가</button><button class="act" data-c="sync">다시 분석</button></div>
       <p class="note" style="margin-top:6px">마지막 분석 ${esc((st.built_at || '없음').replace('T', ' '))} · 유닛 ${(st.summary.units || 0).toLocaleString()} · 연결 ${(st.summary.edges || 0).toLocaleString()}. 같은 서버는 한 번만 넣어야 지도에 하나로 나옵니다.</p></section>
@@ -1746,6 +1752,8 @@ function bindConfig(){
     else if (c === 'ext-remove'){ if (armed !== 'ext:' + v) CFG.confirm = 'ext:' + v; else if (await call('external', {remove:v})) CFG.dirty = true; }
     else if (c === 'rule'){ const x = (API.st.summary.unread || [])[+t.dataset.i]; if (x && await call('rule', {sys:x.sys, kind:x.kind, name:x.name, argi:x.argi, role:t.dataset.role})) CFG.dirty = true; }
     else if (c === 'rule-remove'){ if (await call('rule', {remove:v})) CFG.dirty = true; }
+    else if (c === 'auto'){ if (await call('auto', {id:v, act:t.dataset.act})) CFG.dirty = true; }
+    else if (c === 'weak'){ CFG.weak = !CFG.weak; }
     else if (c === 'link'){ if (await call('link', {from:t.dataset.from, to:t.dataset.to, mode:'calls'})) CFG.dirty = true; }
     else if (c === 'link-clear'){ if (await call('link', {from:t.dataset.from, to:t.dataset.to, mode:'drop'})) CFG.dirty = true; }
     else if (c === 'sync'){ CFG.dirty = false; await startJob('sync'); }

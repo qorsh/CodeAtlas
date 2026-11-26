@@ -31,7 +31,7 @@ python3 atlas/atlas.py -w <이름> ingest <접속 로그 | ->   # 실제 요청�
 
 지금 들어 있는 것
 
-- 언어: Swift, Kotlin, TypeScript/JavaScript, Java, Python, Prisma 스키마(이상 내장 파서), Go(tree-sitter 필요)
+- 언어: Swift, Kotlin, Dart(Flutter), TypeScript/JavaScript, Java, Python, Prisma 스키마(이상 내장 파서), Go(tree-sitter 필요)
 - 규칙: NestJS, Express, Spring(MVC·Data·RestTemplate·Kafka), JPA, Retrofit, FastAPI·Flask, SQLAlchemy, axios·fetch, requests·httpx, Go(net/http·gin·echo·chi 라우터, http 클라이언트), Prisma, 코드 속 SQL, 어느 제품에나 있을 만한 외부·기기 서비스
 - 프레임워크 없이 경로 문자열을 직접 쓰는 클라이언트용 휴리스틱 3종(`client-*`). 넓게 잡으므로 시스템 설정의 `rules` 에 적었을 때만 켜진다
 
@@ -145,6 +145,8 @@ SITTER_SPECS['go'] = dict(
 - `link.calls`: 경로가 여러 서버에 맞을 때 고를 서버(앞에 적은 것 먼저). `link.never`: 잇지 않을 서버.
 
 경로가 그대로는 어느 서버와도 맞지 않는 호출은 접두어를 추정해 맞춘다. 호출 앞에 무언가 더 붙었거나(게이트웨이·WAS 의 컨텍스트 경로) 앞부분이 빠진(기준 주소에 경로가 든) 꼴인데, 같은 접두어로 맞는 호출이 셋 이상(또는 그 시스템의 못 맞춘 호출 절반 이상이면서 둘 이상)일 때만 받아들인다. 맞춘 접두어와 시스템별 집계는 `atlas-manifest.json` 의 `summary.diag` 에 남고 `diagnose` 명령과 설정 패널이 보여 준다.
+
+자가 수리(`self_repair`)는 연결 단계에서 일어난다. 엔진이 읽지 못한 자리를 위치까지 내보내고(`ports.unread_sites`), 연결기가 꼴마다 "API 정의로 본다면" · "API 호출로 본다면"을 실제로 연결해 보고 이어지는 호출이 늘어나는 쪽을 받아들인다(셋 이상, 또는 둘 이상이면서 그 꼴의 절반 이상). 받아들인 것은 `summary.auto` 에 남고 규칙 파일은 만들지 않는다. `link.auto_off`(꼴 하나 끄기), `link.ignore_patterns`(목록에서 무시), `self_repair: false`(통째로 끄기)로 조절한다.
 
 호출 대상을 가리는 순서와 근거는 `atlas.py` 의 `resolve_calls` 에 적혀 있다. 끝내 못 가린 호출은 선을 긋지 않고 결과의 `meta.pending` 에 남기고, 지도에 없는 주소로 가는 호출은 `meta.offmap` 에 모은다. `sync` 출력의 "호출 대상:" 줄이 근거별 건수다.
 

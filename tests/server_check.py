@@ -98,7 +98,7 @@ with tempfile.TemporaryDirectory() as ws:
     check('없는 폴더는 이유를 알려 준다', post('ls', dict(path='/no/such/folder'))[0] == 400)
 
     code, pre = post('add', dict(path=os.path.join(REPO, 'fixtures', 'booking'), dry_run=True))
-    check('미리보기: 시스템을 알아보고 설정은 그대로 둔다', code == 200 and [y['id'] for y in pre['systems']] == ['booking-server', 'booking-web'] and not atlas.load_config(cfg_path)['sources'], pre)
+    check('미리보기: 시스템을 알아보고 설정은 그대로 둔다', code == 200 and [y['id'] for y in pre['systems']] == ['booking-server', 'booking-web', 'booking_app'] and not atlas.load_config(cfg_path)['sources'], pre)
     for name in ('shop', 'booking', 'backoffice'):
         code, out = post('add', dict(path=os.path.join(REPO, 'fixtures', name)))
         check(f'폴더 추가: {name}', code == 200 and out.get('added'), out)
@@ -161,8 +161,13 @@ with tempfile.TemporaryDirectory() as ws:
 
     http = resync()
     st = req('api/state')[1]
+    auto = [a for a in st['summary'].get('auto', []) if a['sys'] == 'push-api']
+    check('자가 수리: 맞아떨어지는 꼴은 스스로 읽어 잇는다', len(auto) == 1 and auto[0]['name'] == 'Endpoint' and auto[0]['role'] == 'provide' and ('push-web', 'push-api') in http, (st['summary'].get('auto'), sorted(http)))
+    check('스스로 읽은 꼴을 끈다', post('auto', dict(id=auto[0]['id'], act='off'))[0] == 200 and req('api/state')[1]['link']['auto_off'] == [auto[0]['id']] and post('auto', dict(id='x', act='off'))[0] == 400)
+    http = resync()
+    st = req('api/state')[1]
     un = [x for x in st['summary'].get('unread', []) if x['sys'] == 'push-api']
-    check('읽지 못한 꼴이 상태에 나온다', len(un) == 1 and un[0]['kind'] == 'ann' and un[0]['name'] == 'Endpoint' and ('push-web', 'push-api') not in http, st['summary'].get('unread'))
+    check('끄면 읽지 못한 꼴로 상태에 나온다', len(un) == 1 and un[0]['kind'] == 'ann' and un[0]['name'] == 'Endpoint' and ('push-web', 'push-api') not in http, st['summary'].get('unread'))
     check('틀린 요청으로는 규칙을 만들지 않는다', post('rule', dict(sys='nope', kind='ann', name='Endpoint', role='provide'))[0] == 400 and post('rule', dict(sys='push-api', kind='ann', name='a b', role='provide'))[0] == 400)
     code, out = post('rule', dict(sys='push-api', kind='ann', name='Endpoint', argi=0, role='provide'))
     made = req('api/state')[1]['custom']

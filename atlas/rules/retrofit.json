@@ -1,9 +1,10 @@
 {
   "id": "retrofit",
-  "title": "Retrofit 인터페이스",
+  "title": "Retrofit 인터페이스 (Java·Kotlin, 그리고 같은 어노테이션을 쓰는 Dart 의 retrofit)",
   "langs": [
     "java",
-    "kotlin"
+    "kotlin",
+    "dart"
   ],
   "rules": [
     {

@@ -556,13 +556,78 @@ def resolve_calls(cfg, units, routes, http, hosts):
                 offmap=sorted(offmap.values(), key=lambda o: -o['n']), hosts_seen=sorted(seen_hosts.values(), key=lambda e: (not e['owner'], e['host'])))
 
 
+def pattern_id(sid, kind, name, argi):
+    return f'{sid}|{kind}|{name}|{argi}'
+
+
+def self_repair(cfg, units, routes, http, hosts, sites, api):
+    """자가 수리: 읽지 못한 꼴을 스스로 채택한다.
+
+    규칙이 없는 방식으로 쓴 코드는 읽히지 않는다. 그런 자리(경로처럼 생긴 문자열이 어노테이션·호출 인자로 놓인 곳)를 꼴별로 묶어,
+    '이 꼴을 API 정의로 본다면' · '이 꼴을 API 호출로 본다면' 을 실제로 해 보고, 지금까지 못 이은 호출이 여럿 이어지는 쪽이 있으면 그 가정을 받아들인다.
+    양쪽이 맞아떨어질 때만 받아들이므로 근거 없이 선이 늘지 않는다. 매번 분석할 때 다시 판단하고, 규칙 파일은 만들지 않는다.
+    설정의 self_repair: false 로 끄고, link.auto_off 로 꼴 하나를 끌 수 있다. 사람이 화면에서 만든 규칙(rules/custom.json)이 있으면 그쪽이 먼저 읽는다."""
+    L = cfg.get('link', {})
+    if cfg.get('self_repair') is False or not sites:
+        return api, [], routes, http
+    off, groups = set(L.get('auto_off', [])) | set(L.get('ignore_patterns', [])), {}
+    have = {(u, tuple(norm_path(path))) for u, mi, method, path, rule, pos in http}       # 이미 다른 방법(경로 문자열 그물 등)으로 후보가 된 자리: 다시 세면 근거가 부풀려진다
+    for kind, name, argi, u, mi, v, above in sites:
+        if (u, tuple(norm_path(v))) not in have:
+            groups.setdefault((units[u]['sys'], kind, name, argi), []).append((u, mi, v, above))
+    join = lambda a, b: '/' + '/'.join(x for x in (a.strip('/'), b.strip('/')) if x)
+    seq = [0]
+
+    def as_routes(pid, S):
+        return [dict(method='ALL', path=join(above, v), segs=norm_path(join(above, v)), unit=u, member=mi, rule='auto#' + pid) for u, mi, v, above in S]
+
+    def as_calls(pid, name, S):
+        last = name.split('.')[-1].upper()
+        out = []
+        for u, mi, v, above in S:
+            seq[0] += 1
+            out.append([u, mi, last if last in ('GET', 'POST', 'PUT', 'DELETE', 'PATCH') else 'GET', v, 'auto#' + pid, -seq[0]])     # 자리 번호는 음수로: 엔진이 낸 후보와 겹치지 않게
+        return out
+
+    adopted, done = [], set()
+    for _ in range(3):              # 하나를 받아들이면 다른 꼴이 맞아떨어질 수 있다(서버 쪽을 읽고 나면 그것을 부르는 쪽이 보인다): 몇 번 되풀이한다
+        base, picked = len(api['resolved']), []
+        for key, S in sorted(groups.items(), key=lambda kv: -len(kv[1]))[:12]:
+            pid = pattern_id(*key)
+            if len(S) < 3 or pid in off or pid in done:
+                continue
+            gain_p = len(resolve_calls(cfg, units, routes + as_routes(pid, S), http, hosts)['resolved']) - base
+            gain_c = len(resolve_calls(cfg, units, routes, http + as_calls(pid, key[2], S), hosts)['resolved']) - base if routes else 0
+            role, gain = ('provide', gain_p) if gain_p > gain_c or (gain_p == gain_c and key[1] == 'ann') else ('consume', gain_c)
+            if gain >= 3 or (gain >= 2 and gain * 2 >= len(S)):
+                picked.append((key, pid, S, role, gain))
+        if not picked:
+            break
+        for key, pid, S, role, gain in picked:
+            done.add(pid)
+            if role == 'provide':
+                new = as_routes(pid, S)
+                routes = routes + new
+                for r in new:
+                    x = units[r['unit']]
+                    if r['member'] is not None and r['member'] < len(x.get('m', [])):
+                        x['m'][r['member']].setdefault('route', f"ALL {r['path']}")
+                    if x.get('kind') not in ('table', 'enum'):
+                        x['kind'] = 'controller'
+            else:
+                http = http + as_calls(pid, key[2], S)
+            adopted.append(dict(id=pid, sys=key[0], kind=key[1], name=key[2], argi=key[3], role=role, n=len(S), gain=gain))
+        api = resolve_calls(cfg, units, routes, http, hosts)
+    return api, adopted, routes, http
+
+
 def link(cfg, results, sources, rules):
     """묶음 결과들을 하나로 합치고 시스템 사이의 선을 만든다. results: [(묶음, 결과)] (설정 순서)."""
     L = cfg.get('link', {})
     sysmap = {s['id']: s for s in cfg['systems']}
     lang_of = lambda u: sysmap[u['sys']]['lang'] if u['sys'] in sysmap else '-'
     ns_of = lambda u: sysmap[u['sys']].get('ns', u['sys']) if u['sys'] in sysmap else u['sys']
-    units, edges, routes, http, dbacc, tables, others, svc, mtok, hosts, unread = [], [], [], [], [], [], [], {}, {}, [], []
+    units, edges, routes, http, dbacc, tables, others, svc, mtok, hosts, unread, sites = [], [], [], [], [], [], [], {}, {}, [], [], []
     for group, res in results:
         off = len(units)
         for u in res['units']:
@@ -584,11 +649,13 @@ def link(cfg, results, sources, rules):
         mtok.update({int(u) + off: t for u, t in P['mtok'].items()})
         hosts += [[u + off, h] for u, h in P.get('hosts', [])]
         unread += P.get('unread', [])
+        sites += [[kind, name, argi, u + off, mi, v, above] for kind, name, argi, u, mi, v, above in P.get('unread_sites', [])]
     n_code = len(units)
 
     # API: 호출 후보 ↔ 제공 라우트. 한 지도에 서버가 여럿이면 경로만으로는 대상을 정할 수 없어, 근거가 강한 순서로 가린다 (resolve_calls 설명 참고)
     ext_cfg = cfg.get('external', [])
     api = resolve_calls(cfg, units, routes, http, hosts)
+    api, adopted, routes, http = self_repair(cfg, units, routes, http, hosts, sites, api)
     agg = {}
     for u, mi, rule, r, how in api['resolved']:
         a = agg.setdefault((u, r['unit']), dict(w=0, routes=[], rules=[], sure=0))
@@ -753,7 +820,7 @@ def link(cfg, results, sources, rules):
                    by_kind={k: sum(1 for e in edges if e['k'] == k) for k in sorted(set(e['k'] for e in edges))},
                    routes=len(routes), open_routes=len(open_routes), http_candidates=len(http),
                    resolved=api['how'], pending=len(pending), offmap=len(api['offmap']), twins=api['twins'], diag=api['diag'],
-                   unread=unread_patterns(cfg, unread, api['diag'], routes),
+                   unread=unread_patterns(cfg, unread, api['diag'], routes), auto=adopted,
                    findings=[dict(kind=k, id=sid, text=t) for k, sid, t in diag_findings(dict(diag=api['diag']), {s['id']: s['name'] for s in cfg['systems']})],
                    external={x['id']: dict(calls=len(api['external'].get(x['id'], [])), name=x.get('name', x['id'])) for x in ext_cfg},
                    unmatched_db=sum(1 for x in dbacc if not any(k[1] == norm_table(x[3]) for k in table_idx)))
@@ -864,6 +931,9 @@ def cmd_sync(cfg, args):
     how, names = summary.get('resolved', {}), dict(unique='맞는 서버가 하나', host='주소', calls='설정', self='자기 시스템', mention='코드에 적힌 주소', source='같은 저장소', affinity='주로 부르는 서버(추정)', prefix='접두어를 맞춰서', external='레거시')
     if how:
         print('호출 대상: ' + ' · '.join(f'{names[k]} {how[k]}' for k in names if how.get(k)) + (f" · 확인 필요 {summary['pending']}" if summary.get('pending') else ''))
+    for a in summary.get('auto', []):
+        what = f"어노테이션 @{a['name']}" if a['kind'] == 'ann' else f"호출 {a['name']}(…)"
+        print(f"  스스로 읽은 꼴: {a['sys']} 의 {what} {a['n']}개를 {'API 정의' if a['role'] == 'provide' else 'API 호출'}로 읽었습니다. 그렇게 보니 호출 {a['gain']}개가 이어졌습니다.")
     for sid, x in summary.get('external', {}).items():
         print(f"  레거시 {x['name']}: 이쪽으로 보내는 호출 {x['calls']}개" + ('' if x['calls'] else '  ← 맞는 호출이 없습니다. 주소(hosts)·경로 꼴(paths)을 확인하세요'))
     if summary.get('pending'):
@@ -919,6 +989,21 @@ def app_name(kind, start, top):
             break
         d = os.path.dirname(d)
     return fallback
+
+
+def flutter_name(cur):
+    """Flutter 앱의 화면에 보이는 이름: Android 의 app_name · android:label, iOS 의 표시 이름에서 찾는다. 없으면 빈 문자열(그때는 pubspec 의 이름을 쓴다)."""
+    def grab(path, pattern):
+        try:
+            m = re.search(pattern, open(path, encoding='utf-8', errors='replace').read(400_000))
+        except OSError:
+            return ''
+        v = m.group(1).strip() if m else ''
+        return '' if not v or re.search(r'[$@{}]', v) else v
+    main = os.path.join(cur, 'android', 'app', 'src', 'main')
+    return (grab(os.path.join(main, 'res', 'values', 'strings.xml'), r'<string\s+name="app_name"[^>]*>([^<]+)</string>')
+            or grab(os.path.join(main, 'AndroidManifest.xml'), r'android:label="([^"]+)"')
+            or grab(os.path.join(cur, 'ios', 'Runner', 'Info.plist'), r'<key>CFBundleDisplayName</key>\s*<string>([^<]*)</string>'))
 
 
 OLD_APP_NAMES = {'iOS 앱': 'ios', 'Android 앱': 'android'}      # 예전에 붙이던 이름. 앱이 여럿이면 구분이 안 된다
@@ -978,7 +1063,13 @@ def detect(root, name):
             dirs[:] = []
             continue
         base = os.path.basename(cur) or name
-        if any(d.endswith('.xcodeproj') for d in dirs) or 'Package.swift' in fs:
+        if 'pubspec.yaml' in fs and has(os.path.join(cur, 'lib'), '.dart', 12):
+            pub = open(os.path.join(cur, 'pubspec.yaml'), encoding='utf-8', errors='replace').read()
+            pkg = (re.search(r'^name:\s*([\w.\-]+)', pub, re.M) or [None, base])[1]
+            found.append(dict(id=base.lower(), name=flutter_name(cur) or pkg, sub='Flutter · Dart' if re.search(r'^\s*flutter\s*:', pub, re.M) else 'Dart', lang='dart', roots=[rel(os.path.join(cur, 'lib'))],
+                              tests=[[rel(os.path.join(cur, 'test')), '.dart']] if os.path.isdir(os.path.join(cur, 'test')) else [], rules=['client-slash-literal']))
+            dirs[:] = []          # android/ · ios/ 는 Flutter 가 만든 껍데기다
+        elif any(d.endswith('.xcodeproj') for d in dirs) or 'Package.swift' in fs:
             roots = [rel(os.path.join(cur, d)) for d in dirs if not d.endswith(('.xcodeproj', 'Tests', 'UITests')) and has(os.path.join(cur, d), '.swift')]
             tests = [[rel(os.path.join(cur, d)), '.swift'] for d in dirs if d.endswith('Tests') and not d.endswith('UITests')]
             if roots:
@@ -1023,17 +1114,18 @@ def unread_patterns(cfg, raw, diag, routes=()):
     hint 는 그 꼴이 API 정의(provide)로 보이는지 호출(consume)로 보이는지에 대한 어림이다. 화면에서는 둘 다 고를 수 있다."""
     apps = {s['id'] for s in cfg['systems'] if any(r.startswith('client-') for r in s.get('rules') or [])}
     served = {x['id'] for x in diag['systems'] if x['routes']}
-    out = []
+    out, ignored = [], set(cfg.get('link', {}).get('ignore_patterns', []))
     for sid, kind, name, argi, n, ex, *more in raw:
         beside = more[0] if more else []
-        if n < 3:
+        if n < 3 or pattern_id(sid, kind, name, argi) in ignored:
             continue
         if sum(1 for v in ex if match_route(routes, None, norm_path(v))) * 2 >= len(ex):      # 그 문자열들이 이미 있는 API 와 같다: 다른 방법(경로 문자열 그물 등)으로 이어진 꼴이라 알릴 것이 없다
             continue
+        weak = sum(1 for v in ex if v.startswith('/')) * 2 < len(ex)       # 슬래시로 시작하지 않는 것이 대부분: 경로가 아닐 가능성이 크다. 화면에서는 접어 둔다
         ex = ex[:3]
         hint = 'consume' if sid in apps else 'provide' if kind == 'ann' or sid in served and re.search(r'(?i)(rout|mapping|handle|register|endpoint|path)', name) else 'consume'
-        out.append(dict(sys=sid, kind=kind, name=name, argi=argi, n=n, ex=ex, hint=hint, beside=[[b, k] for b, k in beside]))
-    return sorted(out, key=lambda x: -x['n'])[:24]
+        out.append(dict(id=pattern_id(sid, kind, name, argi), sys=sid, kind=kind, name=name, argi=argi, n=n, ex=ex, hint=hint, weak=weak, beside=[[b, k] for b, k in beside]))
+    return sorted(out, key=lambda x: (x['weak'], -x['n']))[:24]
 
 
 def custom_rule(sid, kind, name, argi, role):
@@ -1067,8 +1159,8 @@ def save_custom(cfg, pack):
         os.remove(p)
 
 
-APP_LANGS = ('swift', 'kotlin', 'java', 'ts', 'js')
-READS = '읽을 수 있는 서버 API: Spring MVC 어노테이션 · JAX-RS(@Path) · NestJS · Express · FastAPI·Flask · Go.  앱 호출: Retrofit 어노테이션 · axios·fetch · requests · 모바일 앱 코드에 적힌 경로 문자열("/a/b.do" · "a/b" · "https://주소/a/b").'
+APP_LANGS = ('swift', 'kotlin', 'java', 'dart', 'ts', 'js')
+READS = '읽을 수 있는 서버 API: Spring MVC 어노테이션 · JAX-RS(@Path) · NestJS · Express · FastAPI·Flask · Go.  앱 호출: Retrofit 어노테이션 · dio·http(Dart) · axios·fetch · requests · 모바일 앱 코드에 적힌 경로 문자열("/a/b.do" · "a/b" · "https://주소/a/b").'
 
 
 def diag_findings(summary, names):
@@ -1118,8 +1210,10 @@ def print_diag(summary, names, full=False):
         print('  → ' + text)
     if any(k in ('no-routes', 'silent') for k, _, _ in finds):
         print('  ' + READS)
-    if un:
-        print('읽지 못한 꼴  (경로처럼 생긴 문자열이 놓여 있지만 어느 규칙도 읽지 않은 자리)')
+    strong = [x for x in un if not x.get('weak')]
+    if strong:
+        un = strong
+        print('읽지 못한 꼴  (경로처럼 생긴 문자열이 놓여 있지만 어느 규칙도 읽지 않은 자리. 맞아떨어지는 상대가 있었다면 스스로 읽었을 것입니다)')
         for x in un[:12]:
             what = f"어노테이션 @{x['name']}" if x['kind'] == 'ann' else f"호출 {x['name']}(…)" + (f" {x['argi'] + 1}번째 인자" if x['argi'] else '')
             print(f"  {names.get(x['sys'], x['sys'])}: {what} · {x['n']}개 · 예: {', '.join(x['ex'])}" + (' · 함께 붙은 것: ' + ', '.join(f'@{b} {k}' for b, k in x['beside']) if x.get('beside') else ''))
@@ -1471,7 +1565,7 @@ def make_server(cfg, port=0):
                     sources=[dict(name=x['name'], path=x.get('path', ''), git=x.get('git', ''), systems=[y['id'] for y in c['systems'] if y['source'] == x['name']]) for x in c['sources']],
                     systems=[dict(id=y['id'], name=y['name'], sub=y.get('sub', ''), lang=y['lang'], source=y['source'], hosts=y.get('hosts', []), prefix=y.get('prefix', []),
                                   skipped=table.get(y['lang'], '').startswith('문법 없음')) for y in c['systems']],
-                    external=c.get('external', []), link=dict(calls=c['link'].get('calls', {}), never=c['link'].get('never', {})),
+                    external=c.get('external', []), link=dict(calls=c['link'].get('calls', {}), never=c['link'].get('never', {}), auto_off=c['link'].get('auto_off', []), ignore_patterns=c['link'].get('ignore_patterns', [])),
                     built_at=man.get('built_at', ''), version=man.get('version', ''), summary=man.get('summary', {}), job=dict(job, log=job['log'][-60:]),
                     findings=[dict(kind=k, id=sid, text=t) for k, sid, t in diag_findings(man.get('summary', {}), {y['id']: y['name'] for y in c['systems']})], reads=READS,
                     custom=[dict(id=r.get('id'), role=r.get('role'), **r.get('made', {})) for r in load_custom(c)['rules']])
@@ -1611,6 +1705,18 @@ def make_server(cfg, port=0):
             pack['rules'] = [r for r in pack['rules'] if r.get('made') != rule['made']] + [rule]       # 같은 꼴에는 규칙 하나: 다시 고르면 바꾼다
             save_custom(c, pack)
             return dict(id=rule['id'])
+        if name == 'auto':                    # 스스로 읽은 꼴을 끄거나(off) 다시 켜고(on), 읽지 못한 꼴을 목록에서 무시(ignore)한다
+            pid, act = str(body.get('id') or ''), body.get('act')
+            if not re.match(r'[^|]+\|(ann|call)\|[A-Za-z_][\w.]*\|\d+$', pid) or act not in ('off', 'on', 'ignore', 'unignore'):
+                raise SystemExit('알 수 없는 요청입니다.')
+            key = 'ignore_patterns' if act in ('ignore', 'unignore') else 'auto_off'
+            cur = [x for x in c['link'].get(key, []) if x != pid] + ([pid] if act in ('off', 'ignore') else [])
+            if cur:
+                c['link'][key] = cur
+            else:
+                c['link'].pop(key, None)
+            save_config(c)
+            return dict(ok=True)
         if name == 'layout':                  # 화면에서 옮긴 시스템 자리: 작업 공간 메모에 적어 같이 쓰는 사람에게도 같은 배치로 보이게 한다
             npath = os.path.join(live, 'atlas-notes.json')
             notes = json.load(open(npath, encoding='utf-8')) if os.path.exists(npath) else {}

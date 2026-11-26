@@ -69,6 +69,16 @@ with tempfile.TemporaryDirectory() as ws:
     check('관리자 화면의 호출이 확인 필요로 남는다', len(pend) == 1 and sorted(c[0] for c in pend[0]['cands']) == ['booking-server', 'order-service'], meta.get('pending'))
     by1 = {x['id']: x for x in json.load(open(os.path.join(ws, 'atlas-manifest.json'), encoding='utf-8'))['summary']['diag']['systems']}
     check('Retrofit 인터페이스(앱)를 API 를 내주는 쪽으로 잘못 읽지 않는다', by1['mobile']['routes'] == 0 and by1['mobile']['linked'] >= 2, by1.get('mobile'))
+    app = [s for s in meta['systems'] if s['id'] == 'booking_app']
+    check('Flutter 앱이 시스템 하나로 잡히고 앱 이름으로 표시된다 (안의 android·ios 껍데기는 따로 잡지 않는다)', len(app) == 1 and app[0]['name'] == '예약' and app[0]['sub'] == 'Flutter · Dart'
+          and not any(s['id'] in ('android', 'ios', 'booking-android', 'booking-ios') for s in meta['systems']), [s['id'] for s in meta['systems']])
+    dart = {u['name']: u for u in units if u['sys'] == 'booking_app'}
+    check('Dart: 클래스·위젯·최상위 함수와 메서드(화살표 함수, 게터, 본문 없는 선언)를 읽는다', {'BookingApp', 'BookingApi', 'BookingClient', 'Booking', 'BookingListPage', '_BookingListPageState', 'main'} <= set(dart)
+          and {'fetchBookings', 'fetchBooking', 'cancel'} <= {m['n'] for m in dart['BookingApi'].get('m', [])} and 'title' in {m['n'] for m in dart['_BookingListPageState'].get('m', [])}
+          and [m['n'] for m in dart['BookingClient'].get('m', [])] == ['create'] and dart['BookingListPage']['kind'] == 'view', {k: [m['n'] for m in v.get('m', [])] for k, v in dart.items()})
+    calls = {u['name']: sorted(r for m in u.get('m', []) for _, _, r in m.get('h', [])) for u in units if u['sys'] == 'booking_app'}
+    check('Flutter: dio · http(Uri.parse) · Retrofit 방식 호출이 서버 API 에 이어진다', calls.get('BookingApi') == ['DELETE /api/bookings/{booking_id}', 'GET /api/bookings', 'GET /api/bookings/{booking_id}']
+          and calls.get('BookingClient') == ['POST /api/bookings'], calls)
     check('결제 서버는 하나이고 두 제품이 부른다', ('order-service', 'payment-service') in http and ('booking-server', 'payment-service') in http
           and sum(1 for s in meta['systems'] if s['id'].endswith('payment-service')) == 1)
     off = {o['host']: o for o in meta.get('offmap', [])}
@@ -405,15 +415,29 @@ export const f = () => fetch('/push/read');
     summary = json.load(open(os.path.join(ws, 'atlas-manifest.json'), encoding='utf-8'))['summary']
     check('JAX-RS: 클래스의 @Path 와 메서드의 @GET·@POST·@Path 를 읽는다', sorted(http.get(('portal', 'main-api'), [])) == ['GET /main', 'GET /main/logout', 'POST /main/items'], http.get(('portal', 'main-api')))
     un = {(x['sys'], x['kind'], x['name']): x for x in summary.get('unread', [])}
-    x = un.get(('push-api', 'ann', 'Endpoint'))
-    check('규칙이 없는 어노테이션을 읽지 못한 꼴로 찾아낸다', bool(x) and x['n'] == 3 and x['hint'] == 'provide' and '/push/list' in x['ex'] and ('portal', 'push-api') not in http, summary.get('unread'))
+    auto = {a['id']: a for a in summary.get('auto', [])}
+    a = auto.get('push-api|ann|Endpoint|0')
+    check('자가 수리: 규칙이 없는 어노테이션을 API 로 보니 호출이 이어져서 스스로 읽는다', bool(a) and a['role'] == 'provide' and a['n'] == 3 and a['gain'] == 3 and len(http.get(('portal', 'push-api'), [])) == 3
+          and ('push-api', 'ann', 'Endpoint') not in un and '스스로 읽은 꼴' in out, (summary.get('auto'), http.get(('portal', 'push-api'))))
+    # 스스로 읽지 않게 끄면 읽지 못한 꼴로 돌아간다
+    edit(cfg, lambda d: d['link'].update(auto_off=['push-api|ann|Endpoint|0']))
+    atlas(cfg, 'sync')
+    s2 = json.load(open(os.path.join(ws, 'atlas-manifest.json'), encoding='utf-8'))['summary']
+    x = next((x for x in s2.get('unread', []) if (x['sys'], x['name']) == ('push-api', 'Endpoint')), None)
+    check('끄면 스스로 읽지 않고 읽지 못한 꼴로 남는다', bool(x) and x['n'] == 3 and x['hint'] == 'provide' and not s2.get('auto') and ('portal', 'push-api') not in load(ws)[2], (s2.get('unread'), s2.get('auto')))
+    edit(cfg, lambda d: d['link'].update(auto_off=[], ignore_patterns=['push-api|ann|Endpoint|0']))
+    atlas(cfg, 'sync')
+    s3 = json.load(open(os.path.join(ws, 'atlas-manifest.json'), encoding='utf-8'))['summary']
+    check('무시한 꼴은 읽지도, 목록에 올리지도 않는다', not s3.get('auto') and not any(x['name'] == 'Endpoint' for x in s3.get('unread', [])), (s3.get('unread'), s3.get('auto')))
+    edit(cfg, lambda d: d['link'].update(ignore_patterns=[]))
+    atlas(cfg, 'sync')
     routes = sorted(m['route'] for u in units if u['sys'] == 'main-api' for m in u.get('m', []) if m.get('route'))
     check('JAX-RS: 클래스에 @Path 가 없어도 메서드의 @POST·@Path 로 읽는다', 'POST /notice/list' in routes, routes)
     rp = un.get(('main-api', 'ann', 'Path'))
     check('@Path 만 있고 HTTP 메서드 어노테이션이 없는 꼴은 읽지 못한 꼴로 알린다', bool(rp) and rp['n'] == 3 and dict(rp['beside']).get('Produces') == 3 and not any('/report' in r for r in routes), (rp, routes))
     check('이미 읽은 것은 읽지 못한 꼴에 넣지 않는다', not any(k[2] in ('GET', 'POST', 'fetch') for k in un), list(un))
     check('경로가 아닌 문자열(헤더, 파일 주소, 한글 문구)은 읽지 못한 꼴에 넣지 않는다', not any(k[2] in ('Headers', 'URL', 'Text.bind') for k in un), list(un))
-    check('diagnose 가 읽지 못한 꼴을 보여 준다', '읽지 못한 꼴' in atlas(cfg, 'diagnose') and '어노테이션 @Endpoint' in atlas(cfg, 'diagnose'))
+    check('diagnose 가 읽지 못한 꼴을 보여 준다', '읽지 못한 꼴' in atlas(cfg, 'diagnose') and '어노테이션 @Path' in atlas(cfg, 'diagnose'))
 
 with tempfile.TemporaryDirectory() as ws, tempfile.TemporaryDirectory() as src:
     print('9) 클래스에 기준 경로가 없고 같은 경로가 여러 클래스에 있는 서버')
@@ -449,6 +473,31 @@ export const c3 = () => post('/ctx/fleet/save');
     check('다른 호출이 하나뿐인 후보로 간 클래스를 고른다', to.get('OrderResource') == ['POST /approve', 'POST /detail', 'POST /list'] and to.get('StockResource') == ['POST /adjust', 'POST /detail', 'POST /list'], to)
     check('그런 근거가 없으면 접두어가 이름에 든 클래스를 고른다', to.get('FleetResource') == ['POST /detail', 'POST /list', 'POST /save'], to)
     check('근거가 있으면 추정으로 표시하지 않는다', '추정했습니다' not in out and not any(e.get('guess') for e in recs if e['rt'] == 'edge'), out[-600:])
+
+with tempfile.TemporaryDirectory() as ws, tempfile.TemporaryDirectory() as src:
+    print('10) 자가 수리: 서버 쪽을 읽고 나면 그것을 부르는 쪽도 읽는다')
+    put(os.path.join(src, 'push-api', 'pom.xml'), '<project/>')
+    put(os.path.join(src, 'push-api', 'src', 'main', 'java', 'demo', 'PushHandlers.java'),
+        'package demo;\n\npublic class PushHandlers {\n' + ''.join(f'    @Endpoint("/push/{n}")\n    public String {n}() {{ return ""; }}\n\n' for n in ('list', 'send', 'read', 'devices')) + '}\n')
+    put(os.path.join(src, 'caller', 'pom.xml'), '<project/>')
+    put(os.path.join(src, 'caller', 'src', 'main', 'java', 'demo', 'PushGateway.java'),
+        'package demo;\n\npublic class PushGateway {\n    private final Remote remote = new Remote();\n\n' + ''.join(f'    public String {n}() {{ return remote.send("push/{n}", null); }}\n' for n in ('list', 'send', 'read')) + '}\n')
+    web(src, 'portal', """
+export const a = () => fetch('/push/list');
+export const b = () => fetch('/push/devices');
+""")
+    cfg = os.path.join(ws, 'atlas.config.json')
+    atlas(cfg, 'init', 'link-check-selfrepair')
+    for name in ('push-api', 'caller', 'portal'):
+        atlas(cfg, 'add', os.path.join(src, name))
+    out = atlas(cfg, 'sync')
+    meta, units, http = load(ws)
+    auto = {a['id']: a for a in json.load(open(os.path.join(ws, 'atlas-manifest.json'), encoding='utf-8'))['summary'].get('auto', [])}
+    check('어노테이션 꼴을 API 정의로, 그다음 호출 꼴을 API 호출로 받아들인다', auto.get('push-api|ann|Endpoint|0', {}).get('role') == 'provide' and auto.get('caller|call|remote.send|0', {}).get('role') == 'consume'
+          and len(http.get(('caller', 'push-api'), [])) == 3 and len(http.get(('portal', 'push-api'), [])) == 2, (auto, sorted(http)))
+    edit(cfg, lambda d: d.update(self_repair=False))
+    atlas(cfg, 'sync')
+    check('설정에서 자가 수리를 끄면 받아들이지 않는다', not load(ws)[2] and not json.load(open(os.path.join(ws, 'atlas-manifest.json'), encoding='utf-8'))['summary'].get('auto'))
 
 print('실패 %d건: %s' % (len(fails), ', '.join(fails)) if fails else '통과')
 sys.exit(1 if fails else 0)
