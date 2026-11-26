@@ -190,8 +190,18 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--holo);outline-o
 .crow .nm{flex:1 1 220px;min-width:0;font:500 12px var(--font-mono);overflow-wrap:anywhere}
 .crow .nm small{display:block;font:400 10.5px/1.5 var(--font-mono);color:var(--ink-dim)}
 .crow .mini-act,.cform .mini-act{margin-left:0;font-size:11px;padding:5px 8px;color:var(--ink-dim)}
-.cfg input[type=text]{flex:1 1 180px;min-width:0;background:transparent;border:1px solid var(--line);color:var(--ink);font:400 12px var(--font-mono);padding:7px 8px;outline:none}
-.cfg input[type=text]:focus{border-color:var(--holo)}
+.cfg input[type=text],.cfg input[type=password]{flex:1 1 180px;min-width:0;background:transparent;border:1px solid var(--line);color:var(--ink);font:400 12px var(--font-mono);padding:7px 8px;outline:none}
+.cfg input[type=text]:focus,.cfg input[type=password]:focus,.cfg select:focus{border-color:var(--holo)}
+.cfg select{flex:0 0 auto;max-width:100%;background:#04121C;border:1px solid var(--line);color:var(--ink);font:400 12px var(--font-mono);padding:6px;outline:none}
+.cfg .ck{display:inline-flex;gap:6px;align-items:center;font:400 12px var(--font-mono);color:var(--ink);padding:4px 8px;border:1px solid var(--line-soft);cursor:pointer}
+.cfg .ck small{color:var(--ink-dim)}
+.cfg .ck input{accent-color:#5AD7FF;margin:0}
+.fl{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px}
+.fl > .lb{flex:0 0 96px;font:500 11px var(--font-mono);color:var(--ink-dim)}
+.fl > .grow{flex:1 1 260px;min-width:0;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.irow{display:flex;gap:6px;align-items:center;flex-wrap:wrap;width:100%}
+.irow input[data-f=host]{flex:2 1 200px}
+.irow input[data-f=note]{flex:1 1 110px}
 .cform{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .dirs{max-height:240px;overflow:auto;border:1px solid var(--line-soft);margin:8px 0}
 .dirs button{display:block;width:100%;text-align:left;padding:6px 9px;font:400 12px var(--font-mono);color:var(--ink);border-bottom:1px solid var(--line-soft)}
@@ -315,7 +325,8 @@ const KIND = {view:['VIEW','화면',0,'#8BEBFF'],page:['PAGE','웹 화면',0,'#8
   reducer:['STATE','상태·액션 허브',1,'#6FB6FF'],logic:['LOGIC','로직',2,'#6FB6FF'],service:['SERVICE','서비스',2,'#6FB6FF'],ext:['EXT','확장 파일',2,'#6FB6FF'],
   client:['NET','네트워크 클라이언트',3,'#FFD27A'],store:['STORE','저장소',3,'#C9A0FF'],protocol:['PROTO','인터페이스',3,'#9DB4D6'],
   model:['MODEL','데이터 모델',4,'#5E9FB8'],config:['CONFIG','설정·규칙',4,'#5E9FB8'],util:['UTIL','유틸',4,'#5E9FB8'],module:['MODULE','모듈 조립',5,'#5E9FB8'],
-  table:['TABLE','DB 테이블',0,'#D7A6FF'],enum:['ENUM','DB 열거형',1,'#9E86C9'],external:['SVC','외부·기기 서비스',0,'#5EEAD4']};
+  table:['TABLE','DB 테이블',0,'#D7A6FF'],enum:['ENUM','DB 열거형',1,'#9E86C9'],external:['SVC','외부·기기 서비스',0,'#5EEAD4'],infra:['INFRA','웹서버·WAS',0,'#C8D98A']};
+const INFRA = {web:'웹서버', was:'WAS', gw:'게이트웨이·L4'}, INFRAC = '#C8D98A', ENVS = ['', '운영', '검증', '개발', 'DR'];
 const EK = {use:{c:'#5AD7FF',ko:'코드 참조'},http:{c:'#FFD166',ko:'API 호출'},db:{c:'#D7A6FF',ko:'DB'},svc:{c:'#5EEAD4',ko:'외부·기기 서비스'},mirror:{c:'#E8F4FF',ko:'플랫폼 간 대응 구현'},msg:{c:'#FF9EC4',ko:'메시지·이벤트'}};
 const egroup = k => k==='ext' ? 'use' : k==='rel' ? 'db' : k;
 const FD = '"Chakra Petch","IBM Plex Sans KR",sans-serif', FM = '"JetBrains Mono",ui-monospace,Menlo,monospace', FB = '"IBM Plex Sans KR",system-ui,sans-serif';
@@ -340,7 +351,7 @@ const byId = new Map();
 const show = {use:true, http:true, db:true, svc:true, mirror:true, msg:true, rt:true};
 const state = {sel:null, trace:null, hits:null, impact:null, hover:null, edge:null, hoverEdge:null, walk:null, min:false, nav:false, arrange:false, resetArm:false};
 let focus = null, dirty = true, anim = null, inertia = null, zoomTarget = null, drawMs = 0, vis = [];
-const AI = {fn:null, state:'wait', ctl:null, timer:null, notes:{}, hist:[], noteBusy:null, noteErr:null, index:null};
+const AI = {fn:null, state:'wait', ctl:null, timer:null, notes:{}, hist:[], noteBusy:null, noteErr:null, index:null, local:false, max:Infinity};
 const bySlug = new Map(); let selfHash = null;
 const NAV = {hist:[], back:false}; let lastEdges = [], lastBright = [], walkTarget = null;
 let SCALE = 1, RAW = '', CLUSTER = {w:1, h:1}, loadMs = 0, frameMs = 0, lastFrameT = 0;
@@ -350,7 +361,7 @@ const API = {ok:false, token:'', st:null};   // 로컬 서버(atlas.py open)로 
 /* ───────────── 데이터 준비 ───────────── */
 function prepare(recs){
   for (const r of recs){ if (r.rt==='meta') META = r; else if (r.rt==='unit') UNITS[r.i] = r; else EDGES.push(r); }
-  for (const u of UNITS){ if (u.decl==='external') u.kind = 'external'; if (!KIND[u.kind]) u.kind = 'logic'; u.m = u.m||[]; u.out = []; u.in = []; byId.set(u.id, u); for (const m of u.m) m.callers = []; }
+  for (const u of UNITS){ if (u.decl==='external') u.kind = 'external'; if (u.decl==='infra') u.kind = 'infra'; if (!KIND[u.kind]) u.kind = 'logic'; u.m = u.m||[]; u.out = []; u.in = []; byId.set(u.id, u); for (const m of u.m) m.callers = []; }
   EDGES.forEach((e,i) => { e.i = i; e.g = egroup(e.k); UNITS[e.s].out.push(e); UNITS[e.t].in.push(e); });
   for (const u of UNITS) u.m.forEach((m,mi) => {
     (m.c||[]).forEach(([t,tm]) => UNITS[t].m[tm] && UNITS[t].m[tm].callers.push([u.i,mi]));
@@ -365,7 +376,7 @@ function prepare(recs){
   for (const e of EDGES){ ADJ[e.s].push([e.t,e]); ADJ[e.t].push([e.s,e]); }
   for (const p of META.pending || []){ const u = UNITS[p.u]; if (u && p.cands.every(c => UNITS[c[1]])) (u.pend = u.pend || []).push(p); }   // 대상을 정하지 못한 호출
   const pal = {}; let pn = 0;
-  for (const s of META.systems){ const b = s.base||s.id; if (!(b in pal)) pal[b] = WSCOLORS[b] || SYSCOL[b] || (s.ext ? '#A9B7C6' : SYSPAL[pn++ % SYSPAL.length]); SYS[s.id] = {...s, mods:[], units:[], color:pal[b]}; SYSL.push(SYS[s.id]); }
+  for (const s of META.systems){ const b = s.base||s.id; if (!(b in pal)) pal[b] = WSCOLORS[b] || SYSCOL[b] || (s.ext ? '#A9B7C6' : s.infra ? INFRAC : SYSPAL[pn++ % SYSPAL.length]); SYS[s.id] = {...s, mods:[], units:[], color:pal[b]}; SYSL.push(SYS[s.id]); }
   const mm = new Map();
   for (const u of UNITS){
     const key = u.sys+'|'+u.mod; let m = mm.get(key);
@@ -377,12 +388,21 @@ function prepare(recs){
     m.rank = m.units.reduce((s,u) => s+KIND[u.kind][2],0)/m.units.length;
   }
   for (const s of SYSL) s.mods.sort((a,b) => a.rank-b.rank || (a.name<b.name?-1:1));
+  /* 시스템 사이의 굵은 선. 서버 구성(웹서버·WAS)을 적어 둔 서버로 가는 API 호출은 앱 → 웹서버 → WAS → 서버로 그 길을 따라 긋는다.
+     유닛끼리의 선은 그대로 메서드에서 API 로 바로 잇는다(무엇이 무엇을 부르는지는 그쪽이 보여 준다). */
   const ma = new Map(), sa = new Map();
+  const via = new Map(SCALE === 1 ? (META.via || []).map(v => [v[0]+'|'+v[1], v[2].filter(id => SYS[id] && SYS[id].units.length)]) : []);
+  const trunk = (a, b, g, w, hop) => { const k = a+'|'+b+'|'+g; let x = sa.get(k); if (!x){ x = {a:SYS[a],b:SYS[b],g,w:0}; sa.set(k,x); } x.w += w; if (hop) x.hop = true; };
   for (const e of EDGES){
     const a = UNITS[e.s], b = UNITS[e.t];
     if (a.module !== b.module){ const k = a.module.idx+'|'+b.module.idx+'|'+e.g; let x = ma.get(k); if (!x){ x = {a:a.module,b:b.module,g:e.g,w:0,cross:a.sys!==b.sys}; ma.set(k,x); } x.w += 1; }
-    if (a.sys !== b.sys){ const k = a.sys+'|'+b.sys+'|'+e.g; let x = sa.get(k); if (!x){ x = {a:SYS[a.sys],b:SYS[b.sys],g:e.g,w:0}; sa.set(k,x); } x.w += 1; }
+    if (a.sys !== b.sys){
+      const way = e.g === 'http' ? via.get(a.sys+'|'+b.sys) : null;
+      if (way && way.length){ e.via = way; const hops = [a.sys, ...way, b.sys]; for (let i = 0; i < hops.length-1; i++) trunk(hops[i], hops[i+1], 'http', 1, true); }
+      else trunk(a.sys, b.sys, e.g, 1);
+    }
   }
+  if (SCALE === 1) for (const c of META.chains || []) for (let i = 0; i < c.length-1; i++){ const a = SYS[c[i]], b = SYS[c[i+1]]; if (a && b && a.units.length && b.units.length) trunk(a.id, b.id, 'http', 0, true); }   // 아직 지나가는 호출이 없는 길도 보이게
   MODE = [...ma.values()]; SYSE = [...sa.values()];
 }
 
@@ -411,7 +431,7 @@ function layout(){
   for (const s of SYSL){
     if (!s.mods.length){ s.w = s.h = 0; continue; }
     const p = packColumns(s.mods, 1.45, MG, MG);
-    s.w = Math.max(p.w + SPD*2, 1500); s.h = Math.max(p.h + STT + SPD, 1100);
+    s.w = Math.max(p.w + SPD*2, s.infra ? 1040 : 1500); s.h = Math.max(p.h + STT + SPD, s.infra ? 720 : 1100);
     const ox = (s.w - p.w)/2, oy = STT + (s.h - STT - SPD - p.h)/2;
     for (const m of s.mods){ m.rx = m.x + ox; m.ry = m.y + oy; }
   }
@@ -580,7 +600,8 @@ function draw(now){
     const x = SX(s.x), y = SY(s.y), w = s.w*z, h = s.h*z;
     ctx.fillStyle = rgba(s.color, state.arrange ? 0.1 : 0.03); ctx.fillRect(x,y,w,h);
     if (s.ext) ctx.setLineDash([9, 7]);          // 소스 없는 시스템(레거시)
-    ctx.strokeStyle = rgba(s.color, s.ext ? 0.7 : 0.32); ctx.lineWidth = 1; ctx.strokeRect(Math.round(x)+.5, Math.round(y)+.5, w, h);
+    else if (s.infra) ctx.setLineDash([14, 4, 2, 4]);   // 서버 구성(웹서버·WAS): 코드가 아니라 사람이 적어 둔 것
+    ctx.strokeStyle = rgba(s.color, s.ext || s.infra ? 0.7 : 0.32); ctx.lineWidth = 1; ctx.strokeRect(Math.round(x)+.5, Math.round(y)+.5, w, h);
     ctx.setLineDash([]);
     if (s.cut && w > 26){                        // 요청을 처리하는 곳은 있는데 이어진 선이 없다(또는 호출을 읽지 못했다): 주황 점선 테두리
       ctx.setLineDash([4, 5]); ctx.strokeStyle = rgba(CUTC, 0.9); ctx.lineWidth = 1.5; ctx.strokeRect(Math.round(x)+3.5, Math.round(y)+3.5, w-6, h-6); ctx.setLineDash([]);
@@ -602,7 +623,7 @@ function draw(now){
       ctx.globalAlpha = aT; ctx.fillStyle = rgba(s.color,1); ctx.font = `600 ${px}px ${FD}`; ctx.textBaseline = 'alphabetic';
       ctx.fillText(s.name.toUpperCase(), tx, ty);
       ctx.font = `500 ${clamp(px*0.3,9.5,13)}px ${FM}`; ctx.fillStyle = rgba('#86B6CB',1);
-      ctx.fillText(`${s.sub}  ·  ${s.mods.length} MODULES  ·  ${s.units.length} UNITS  ·  ${s.nm.toLocaleString()} METHODS${s.open ? `  ·  부르는 곳 없는 API ${s.open}/${s.routes}` : ''}`, tx+2, ty + clamp(px*0.5, 13, 22));
+      ctx.fillText(s.infra ? `${s.sub}  ·  요청이 서버에 닿기 전에 거치는 곳` : `${s.sub}  ·  ${s.mods.length} MODULES  ·  ${s.units.length} UNITS  ·  ${s.nm.toLocaleString()} METHODS${s.open ? `  ·  부르는 곳 없는 API ${s.open}/${s.routes}` : ''}`, tx+2, ty + clamp(px*0.5, 13, 22));
       if (s.cut){ ctx.font = `600 ${clamp(px*0.34,10.5,14)}px ${FB}`; ctx.fillStyle = CUTC; ctx.fillText('연결을 찾지 못함 · ' + s.cut.short, tx+2, ty + clamp(px*0.5, 13, 22) + clamp(px*0.48, 15, 22)); }
       ctx.globalAlpha = 1;
     }
@@ -633,14 +654,16 @@ function draw(now){
   // 연결선
   worldTransform();
   const px1 = 1/z;
-  if (aTrunk > 0.02){
+  {
     for (const e of SYSE){
-      if (!show[e.g] || !(inView(e.a) || inView(e.b))) continue;
-      ctx.beginPath(); pathCurve(e.geo); const lw = (1.2 + Math.log2(1+e.w)*0.75)*px1, col = EK[e.g].c, a = aTrunk*(focus ? 0.25 : 1);
+      // 웹서버·WAS 를 거치는 길은 가까이 들어가도 남긴다(점선): 그 상자에는 유닛끼리의 선이 없어, 지우면 어디와 이어진 곳인지 안 보인다
+      const near = e.hop && aTrunk < 0.45, aT = near ? 0.45 : aTrunk;
+      if (aT <= 0.02 || !show[e.g] || !(inView(e.a) || inView(e.b))) continue;
+      ctx.beginPath(); pathCurve(e.geo); const lw = (1.2 + Math.log2(1+e.w)*0.75)*px1, col = EK[e.g].c, a = aT*(focus ? 0.25 : 1);
       ctx.strokeStyle = rgba(col, 0.13*a); ctx.lineWidth = lw*4; ctx.stroke();
-      ctx.strokeStyle = rgba(col, (e.g==='use' ? 0.5 : 0.85)*a); ctx.lineWidth = lw; ctx.setLineDash(e.g==='mirror' ? [9*px1,7*px1] : []); ctx.stroke(); ctx.setLineDash([]);
+      ctx.strokeStyle = rgba(col, (e.g==='use' ? 0.5 : 0.85)*a); ctx.lineWidth = lw; ctx.setLineDash(e.g==='mirror' ? [9*px1,7*px1] : near ? [12*px1,9*px1] : []); ctx.stroke(); ctx.setLineDash([]);
       if (rtOn && e.rt && !focus) drawFlow(e.geo, e.rt, now, px1, e.ph, pulse);
-      else if (!reduceMotion && !focus && e.g !== 'mirror'){ const p = bez(e.geo, (now*0.00022 + e.ph) % 1); ctx.beginPath(); ctx.arc(p[0],p[1],2.4*px1,0,TAU); ctx.fillStyle = rgba('#FFFFFF', 0.9*aTrunk); ctx.fill(); }
+      else if (!reduceMotion && !focus && e.g !== 'mirror'){ const p = bez(e.geo, (now*0.00022 + e.ph) % 1); ctx.beginPath(); ctx.arc(p[0],p[1],2.4*px1,0,TAU); ctx.fillStyle = rgba('#FFFFFF', 0.9*aT); ctx.fill(); }
     }
   }
   if (aModEdge > 0.02){
@@ -817,7 +840,7 @@ function draw(now){
     for (const e of SYSE){
       if (!show[e.g] || e.g === 'use' && e.w < 6 || Math.min(e.a.w, e.b.w)*z < 70) continue;
       if (dense && !(state.hoverEdge && state.hoverEdge.e === e)) continue;
-      const p = bez(e.geo, e.lt), x = SX(p[0]), y = SY(p[1]), label = `${EK[e.g].ko} ${e.w}`, tw = ctx.measureText(label).width + 12;
+      const p = bez(e.geo, e.lt), x = SX(p[0]), y = SY(p[1]), label = e.hop && !e.w ? '들어가는 길' : `${EK[e.g].ko} ${e.w}${e.hop ? ' · 경유' : ''}`, tw = ctx.measureText(label).width + 12;
       ctx.globalAlpha = aTrunk; ctx.fillStyle = 'rgba(2,10,18,.9)'; ctx.fillRect(x-tw/2, y-8, tw, 16);
       ctx.strokeStyle = rgba(EK[e.g].c, 0.7); ctx.lineWidth = 1; ctx.strokeRect(Math.round(x-tw/2)+.5, Math.round(y-8)+.5, tw, 16);
       ctx.fillStyle = EK[e.g].c; ctx.fillText(label, x, y+0.5);
@@ -853,13 +876,13 @@ function drawEmblem(s, now, alpha){
     if (tw > R*1.3){ px = Math.max(9, px*R*1.3/tw); ctx.font = `700 ${px}px ${FD}`; }
     ctx.fillText(nm, cx, cy + px*0.1);
     ctx.font = `500 ${clamp(R*0.085, 8.5, 10.5)}px ${FM}`; ctx.fillStyle = '#86B6CB';
-    ctx.fillText(`${s.units.length} UNITS`, cx, cy + px*0.1 + clamp(R*0.17, 12, 18));
+    ctx.fillText(s.infra ? '거치는 곳' : `${s.units.length} UNITS`, cx, cy + px*0.1 + clamp(R*0.17, 12, 18));
     ctx.fillText(s.sub, cx, cy - px*0.95);
     if (s.cut){ ctx.font = `600 ${clamp(R*0.09, 9.5, 11.5)}px ${FB}`; ctx.fillStyle = CUTC; ctx.fillText('연결을 찾지 못함', cx, cy + px*0.1 + clamp(R*0.17, 12, 18) + clamp(R*0.14, 12, 16)); }
   } else {
     const tiny = Math.min(s.w,s.h)*cam.z < 60, above = s.y + s.h/2 < (WORLD.y0+WORLD.y1)/2 - 200, ly = above ? SY(s.y) - (tiny ? 7 : 22) : SY(s.y+s.h) + 16;
     ctx.font = `600 ${tiny ? 10 : 11.5}px ${FD}`; ctx.fillText(s.name, cx, ly);
-    if (!tiny){ ctx.font = `500 9px ${FM}`; ctx.fillStyle = '#86B6CB'; ctx.fillText(`${s.units.length} UNITS`, cx, ly + 13); }
+    if (!tiny){ ctx.font = `500 9px ${FM}`; ctx.fillStyle = '#86B6CB'; ctx.fillText(s.infra ? (INFRA[s.infra] || '거치는 곳') : `${s.units.length} UNITS`, cx, ly + 13); }
     if (s.cut){ ctx.font = `600 ${tiny ? 9 : 10}px ${FB}`; ctx.fillStyle = CUTC; ctx.fillText('연결을 찾지 못함', cx, ly + (tiny ? 11 : 26)); }
   }
   ctx.restore(); ctx.textAlign = 'left';
@@ -1134,15 +1157,47 @@ function clearAll(){
    보는 사람의 Claude 계정으로 호출한다. 보내는 것은 구조 정보(이름·시그니처·주석·연결·문자열)뿐이고 코드 본문은 없다. */
 function loadLocal(){ try { AI.notes = JSON.parse(localStorage.getItem('atlas-ai-notes-v1') || '{}') || {}; AI.hist = JSON.parse(localStorage.getItem('atlas-ai-traces-v1') || '[]') || []; } catch (e){ AI.notes = {}; AI.hist = []; } }
 function saveLocal(k, v){ try { localStorage.setItem(k, JSON.stringify(v)); } catch (e){} }
+/* AI 는 두 군데서 온다. claude.ai 아티팩트로 게시한 화면에서는 그쪽이 내주는 기능을 쓰고,
+   atlas.py open 으로 띄운 화면에서는 로컬 서버(api/ai)가 작업 공간에 정해 둔 곳(Claude API, Azure 의 Claude, 사내 엔드포인트)으로 넘긴다.
+   어느 쪽이든 보내는 것은 구조 정보로 만든 글과 사람이 적은 문의뿐이다. */
 async function initAI(){
   let fn = null;
   try { if (window.claude && typeof window.claude.use === 'function') fn = await window.claude.use('sample'); } catch (e){ fn = null; }
-  AI.fn = fn || null; AI.state = AI.fn ? 'on' : 'off';
+  if (!fn && API.ok && API.st && API.st.ai && API.st.ai.on) fn = localAI();
+  AI.fn = fn || null; AI.state = AI.fn ? 'on' : 'off'; AI.local = !!(fn && fn.local);
+  AI.max = AI.local ? Math.max(20000, +API.st.ai.max_chars || 240000) : Infinity;
   $('#q').placeholder = AI.state === 'on' ? '문의·수정 요청·오류를 적고 Enter · AI가 경로를 추적합니다' : '문의·수정 요청·오류를 그대로 적어 보세요';
   if (state.sel) renderInspector(); if (state.hits) renderTrace();
 }
+function localAI(){
+  const mem = new Map();
+  const ask = async (prompt, o={}) => {
+    const key = (o.modelTier || '') + '\n' + prompt;
+    if (o.cache && !o.cache.refresh && mem.has(key)) return mem.get(key);
+    let r, d;
+    try {
+      r = await fetch('api/ai', {method:'POST', headers:{'Content-Type':'application/json', 'X-Atlas-Token':API.token}, body:JSON.stringify({prompt, tier:o.modelTier === 'quick' ? 'quick' : 'default'}), signal:o.signal});
+      d = await r.json();
+    } catch (e){ throw e && e.name === 'AbortError' ? {code:'cancelled'} : {code:'network', local:true, message:'로컬 서버에 닿지 않습니다. atlas.py open 이 실행 중인지 확인하세요.'}; }
+    if (!r.ok) throw {code:d.code || 'unavailable', local:true, message:d.error || ''};
+    if (o.cache){ mem.set(key, d.text); if (mem.size > 40) mem.delete(mem.keys().next().value); }
+    return d.text;
+  };
+  const fn = async (p, o) => ({text:await ask(p, o), truncated:false});
+  fn.json = async (p, o) => {          // 답 앞뒤에 설명이나 코드 울타리가 붙어도 JSON 부분만 읽는다
+    const t = String(await ask(p, o)), a = t.indexOf('{'), b = t.lastIndexOf('}');
+    if (a < 0 || b <= a) throw {code:'invalid_json'};
+    try { return JSON.parse(t.slice(a, b + 1)); } catch (e){ throw {code:'invalid_json'}; }
+  };
+  fn.local = true;
+  return fn;
+}
 function aiCopy(e){
   const c = e && e.code;
+  if (e && e.local && e.message){      // 로컬 서버가 알려 준 이유를 그대로 보여 준다
+    if (['off','no_sdk','config'].includes(c)) AI.state = 'off';
+    return {msg:e.message, retry:!['off','no_sdk','config','auth','not_found','bad_request','prompt_too_large','refused'].includes(c)};
+  }
   if (['not_granted','sampling_disabled','not_declared','capability_disabled','capability_removed'].includes(c)){ AI.state = 'off'; return {msg:'이 화면에서는 AI 사용이 허용되지 않아 키워드 결과만 보여 줍니다.', retry:false}; }
   if (c === 'rate_limited') return {msg:'AI 호출 한도에 걸렸습니다. 잠시 뒤 다시 시도해 주세요.', retry:true};
   if (c === 'session_expired') return {msg:'로그인이 만료되었습니다. 다시 로그인한 뒤 시도해 주세요.', retry:true};
@@ -1162,6 +1217,7 @@ function unitCard(u, maxM, kw){
     ms = ms.slice().sort((a,b) => score(b)-score(a)).slice(0,maxM).sort((a,b) => a[1]-b[1]);
     L.push(`  (메서드 ${u.m.length}개 중 ${maxM}개만 표시)`);
   }
+  if (u.kind === 'infra') return `#${u.i} [${SYS[u.sys].name}] ${u.name} — ${INFRA[(u.infra || {}).kind] || '서버 구성'}${u.infra && u.infra.product ? ' (' + u.infra.product + ')' : ''}. 요청이 서버 코드에 닿기 전에 거치는 곳. 뒤에 있는 것: ${((u.infra || {}).to || []).map(id => SYS[id] ? SYS[id].name : id).join(', ') || '없음'}`;   // 주소(인스턴스)는 AI 에 보내지 않는다
   for (const [m] of ms){
     if (m.k === 'field'){ L.push(`  · ${m.s}`); continue; }
     let s = `  · ${m.n}() L${m.l}${m.e > m.l ? '-' + m.e : ''}${m.route ? ' [' + m.route + ']' : ''} :: ${String(m.s||'').slice(0,110)}`;
@@ -1190,16 +1246,41 @@ function indexLines(){
   const L = [];
   for (const u of UNITS){
     if (!u.m.length && u.loc <= 12 && !u.doc && u.kind !== 'external' && u.kind !== 'table') continue;
-    L.push(`${u.i}|${u.sys}|${u.mod}|${u.name}|${KIND[u.kind][0]}|${u.m.filter(m => m.k !== 'field').slice(0,7).map(m => m.n).join(',')}|${(u.doc||'').slice(0,70)}`);
+    L.push(unitLine(u));
   }
   return AI.index = L.join('\n');
 }
-function promptPick(q){ return `너는 소프트웨어 제품의 코드 지도에서 문의와 관련된 위치를 고르는 검색기다.
+/* 시스템이 많아 유닛 목록이 한 번에 보낼 크기를 넘으면, 먼저 모듈 목록만 보내 볼 모듈을 고르게 한 뒤 그 안의 유닛만 보낸다. */
+const unitLine = u => `${u.i}|${u.sys}|${u.mod}|${u.name}|${KIND[u.kind][0]}|${u.m.filter(m => m.k !== 'field' && m.k !== 'inst').slice(0,7).map(m => m.n).join(',')}|${(u.doc||'').slice(0,70)}`;
+function moduleLines(max){
+  const per = clamp(Math.floor(max/Math.max(1, MODS.length)/20), 2, 14);
+  return MODS.map(m => `${m.idx}|${m.sys.id}|${m.name}|${m.units.length}|${m.units.slice().sort((a,b) => b.deg-a.deg).slice(0, per).map(u => u.name).join(',')}`).join('\n').slice(0, max);
+}
+function promptModules(q, lines){ return `너는 소프트웨어 제품의 코드 지도에서 문의와 관련된 영역을 고르는 검색기다.
+
+아래는 여러 시스템의 모듈(폴더·패키지) 목록이다. 시스템: ${SYSL.map(s => s.id + '=' + s.name).join(', ')}.
+형식: 번호|시스템|모듈|유닛 수|대표 유닛 이름
+
+${lines}
+
+문의: """${q.slice(0,600)}"""
+
+이 문의를 조사할 때 들여다봐야 할 모듈을 12~30개 골라라. 화면 → 로직 → 네트워크 클라이언트 → 서버 API → 서비스 → DB 순으로 데이터가 지나가는 길이 이어지게, 문의가 거치는 시스템마다 고른다.
+JSON 하나만 답하라. 예: {"modules":[3,17,42]}`; }
+function indexOfModules(mods, extra, max){
+  const L = []; let n = 0;
+  const add = u => { const line = unitLine(u); if (n + line.length + 1 > max) return false; L.push(line); n += line.length + 1; return true; };
+  const seen = new Set();
+  for (const i of extra){ const u = UNITS[i]; if (u && !seen.has(i)){ seen.add(i); add(u); } }      // 키워드로 걸린 유닛은 모듈과 상관없이 넣는다
+  for (const m of MODS){ if (!mods.has(m.idx)) continue; for (const u of m.units){ if (seen.has(u.i) || (!u.m.length && u.loc <= 12 && !u.doc && u.kind !== 'external' && u.kind !== 'table')) continue; seen.add(u.i); if (!add(u)) return L.join('\n'); } }
+  return L.join('\n');
+}
+function promptPick(q, lines){ return `너는 소프트웨어 제품의 코드 지도에서 문의와 관련된 위치를 고르는 검색기다.
 
 아래는 한 제품을 이루는 여러 시스템의 코드 유닛 목록이다. 시스템: ${SYSL.map(s => s.id + '=' + s.name).join(', ')}.
 형식: 번호|시스템|모듈|이름|종류|메서드 일부|주석 일부
 
-${indexLines()}
+${lines || indexLines()}
 
 문의: """${q.slice(0,600)}"""
 
@@ -1215,11 +1296,16 @@ function gatherCandidates(picked, local){
   for (const i of [...set]){ const u = UNITS[i]; for (const e of u.out) if (e.g === 'http' || e.k === 'db') set.add(e.t); for (const e of u.in) if (e.g === 'http') set.add(e.s); }
   return [...set].slice(0,46);
 }
+function candCards(cand, kw){        // 후보 구조를 한 번에 보낼 크기에 맞춘다: 넘치면 뒤쪽(덜 관련된) 후보부터 뺀다
+  const cards = cand.map(i => unitCard(UNITS[i], 14, kw)), room = AI.max*0.85; let total = cards.reduce((a,c) => a + c.length + 2, 0);
+  while (total > room && cards.length > 8) total -= cards.pop().length + 2;
+  return cards.join('\n\n');
+}
 function promptTrace(q, cand, kw){ return `너는 여러 시스템으로 이뤄진 제품의 코드 구조를 읽고, 들어온 문의에 대해 어디를 봐야 하는지 알려 주는 분석가다.
 
 아래는 이 문의와 관련 있어 보이는 코드 유닛의 구조 정보다. 코드 본문은 없고 시그니처, 주석, 호출 관계, 시스템 간 연결(API 호출·DB·외부 서비스·플랫폼 간 대응 구현), 코드에 들어 있는 문자열(화면 문구·오류 코드·설정 키)만 있다. #숫자는 유닛 번호다.
 
-${cand.map(i => unitCard(UNITS[i], 14, kw)).join('\n\n')}
+${candCards(cand, kw)}
 
 문의: """${q.slice(0,600)}"""
 
@@ -1291,7 +1377,17 @@ async function runAITrace(q, refresh){
   AI.timer = setInterval(() => { const el = $('#ai-el'); if (el) el.textContent = Math.round((Date.now()-t0)/1000) + '초'; }, 500);
   const cache = refresh ? {gcTime:3600000, refresh:true} : {gcTime:3600000};
   try {
-    const r1 = await AI.fn.json(promptPick(q), {modelTier:'quick', signal:ctl.signal, cache});
+    let lines = indexLines();
+    if (lines.length > AI.max*0.85){              // 지도가 커서 유닛 목록이 한 번에 안 들어간다: 모듈 단계로 먼저 좁힌다
+      state.hits.ai = {phase:0}; renderTrace();
+      const r0 = await AI.fn.json(promptModules(q, moduleLines(AI.max*0.8)), {modelTier:'quick', signal:ctl.signal, cache});
+      if (ctl.signal.aborted) return;
+      const mods = new Set((r0 && Array.isArray(r0.modules) ? r0.modules : []).map(Number).filter(i => Number.isInteger(i) && MODS[i]));
+      lines = indexOfModules(mods, local.slice(0, 40).map(h => h.u), AI.max*0.8);
+      if (!lines) throw {code:'empty_completion'};
+      state.hits.ai = {phase:1, narrowed:mods.size}; renderTrace();
+    }
+    const r1 = await AI.fn.json(promptPick(q, lines), {modelTier:'quick', signal:ctl.signal, cache});
     if (ctl.signal.aborted) return;
     const picked = [...new Set((r1 && Array.isArray(r1.units) ? r1.units : []).map(Number).filter(i => Number.isInteger(i) && UNITS[i]))];
     const kw = (r1 && Array.isArray(r1.keywords) ? r1.keywords : []).map(k => String(k).toLowerCase()).slice(0,10);
@@ -1362,9 +1458,10 @@ function renderTrace(){
     el.hidden = false;
   } else if (state.hits){
     const h = state.hits;
-    const bar = h.ai ? `<div class="aibar"><span class="pulse"></span><span>${h.ai.phase === 1 ? `AI가 유닛 ${UNITS.length}개에서 후보를 고르는 중` : `AI가 후보 ${h.ai.n}곳의 구조를 읽고 경로를 짜는 중`}</span><span class="el" id="ai-el"></span><button class="mini-act" data-act="ai-stop">중지</button></div>`
+    const bar = h.ai ? `<div class="aibar"><span class="pulse"></span><span>${h.ai.phase === 0 ? `AI가 모듈 ${MODS.length}개에서 볼 곳을 좁히는 중` : h.ai.phase === 1 ? (h.ai.narrowed ? `AI가 고른 모듈 ${h.ai.narrowed}개에서 후보를 고르는 중` : `AI가 유닛 ${UNITS.length}개에서 후보를 고르는 중`) : `AI가 후보 ${h.ai.n}곳의 구조를 읽고 경로를 짜는 중`}</span><span class="el" id="ai-el"></span><button class="mini-act" data-act="ai-stop">중지</button></div>`
       : h.aiMsg ? `<div class="aibar err"><span>${esc(h.aiMsg)}</span>${h.aiRetry ? `<button class="mini-act" data-act="ai-retry">다시 시도</button>` : ''}</div>`
-      : AI.state === 'on' && h.list.length ? `<div class="acts"><button class="act ai" data-act="ai-retry">AI로 경로 추적</button></div>` : '';
+      : AI.state === 'on' && h.list.length ? `<div class="acts"><button class="act ai" data-act="ai-retry">AI로 경로 추적</button></div>`
+      : API.ok && AI.state === 'off' && !h.kind ? `<div class="acts"><button class="act" data-act="cfg-ai">AI 연결을 설정하면 경로까지 추적합니다</button></div>` : '';
     el.innerHTML = `<div class="side-head"><div><span class="eyebrow">${h.ai ? 'AI 추적' : esc(h.kind || '검색')}</span><h2>${esc(h.q)}</h2></div><button class="x" data-act="clear" aria-label="검색 닫기">닫기</button></div>
     <div class="side-body">${bar}${h.list.length ? `
       <section><h3>${h.ai && h.ai.phase === 2 ? 'AI가 고른 후보' : '걸린 곳'} <em>${h.list.length}곳${h.ai ? '' : ` · 서로 이어지는 경로 포함 ${h.units.size}곳 강조`}</em></h3><div class="steps">${h.list.map((x,i) => { const u = UNITS[x.u]; return `<button class="step" data-u="${u.i}"${x.m != null ? ` data-um="${x.m}"` : ''}><span class="no">${i+1}</span><span><span class="who">${sysTag(u)}${esc(u.name)}${x.m != null ? '.' + esc(u.m[x.m].n) : ''}</span><span class="what">${esc(KIND[u.kind][1])} · ${esc(u.mod)} · ${esc(x.why.slice(0,4).join(', '))}</span></span></button>`; }).join('')}</div></section>
@@ -1385,10 +1482,13 @@ function renderTrace(){
 /* 설정 메뉴(오른쪽 위 톱니바퀴): 프로젝트 설정으로 들어가는 입구, 배치 편집, 시스템으로 바로 가기를 한곳에 둔다. */
 function renderNav(el){
   const list = SYSL.filter(s => !s.base).slice().sort((a,b) => a.x - b.x || a.y - b.y), pend = pendingCount();
-  const kind = s => s.ext ? '레거시' : s.id === 'device' || s.id === 'cloud' ? '외부' : '시스템';
+  const kind = s => s.ext ? '레거시' : s.infra ? ({web:'웹서버', was:'WAS', gw:'게이트'}[s.infra] || '구성') : s.id === 'device' || s.id === 'cloud' ? '외부' : '시스템';
   el.innerHTML = `<div class="side-head"><div><span class="eyebrow">설정</span><h2>${esc(String(META.repo || '코드 아틀라스'))}</h2></div><button class="x" data-act="nav" aria-label="설정 닫기">닫기</button></div>
   <div class="side-body">
-    ${API.ok ? `<section><h3>프로젝트</h3><div class="acts"><button class="act" data-act="cfg">폴더 추가 · 레거시 · 다시 분석</button></div></section>` : ''}
+    ${API.ok ? `<section><h3>프로젝트</h3><div class="acts"><button class="act" data-act="cfg">폴더 추가 · 레거시 · 다시 분석</button></div></section>
+    <section><h3>서버 구성 <em>코드에 없는 것을 적어 둡니다</em></h3><div class="acts"><button class="act" data-act="cfg-web">웹서버 추가</button><button class="act" data-act="cfg-was">WAS 추가</button><button class="act" data-act="cfg-infra">서버 주소 묶기</button></div>
+      <p class="note" style="margin-top:6px">앱이 부르는 주소(웹서버)와 서버 코드 사이를 이어 줍니다. 개발·운영처럼 주소만 다른 인스턴스는 한 서버로 묶습니다.</p></section>
+    <section><h3>AI <em>${AI.state === 'on' ? '켜짐' : '꺼짐'}</em></h3><div class="acts"><button class="act" data-act="cfg-ai">AI 연결 설정</button></div></section>` : ''}
     ${(() => { const sum = (SCALE === 1 && MAN && MAN.summary) || {}, none = (sum.findings || []).find(f => f.kind === 'no-routes'), un = sum.unread || [];
       return (none ? `<section><h3 style="color:#FFB454">서버 API</h3><p>${esc(none.text)}</p></section>` : '')
         + (un.length ? `<section><h3 style="color:#FFB454">읽지 못한 꼴 <em>${un.length}가지</em></h3><div class="xlink">${un.slice(0, 8).map(x => `<button class="xrow srow" data-sys="${esc(x.sys)}" style="--c:#FFB454"><span class="k">${x.kind === 'ann' ? '어노테이션' : '호출'}</span><span class="n">${x.kind === 'ann' ? '@' + esc(x.name) : esc(x.name) + '(…)'}<span class="r">${esc(SYS[x.sys] ? SYS[x.sys].name : x.sys)} · 경로 문자열 ${x.n}개 · 예: ${x.ex.map(esc).join(' · ')}</span></span></button>`).join('')}</div>
@@ -1410,7 +1510,7 @@ const CUT_SHORT = {'no-callers':'API 를 부르는 곳이 없음', mismatch:'호
 function applyFindings(){
   for (const s of SYSL) s.cut = null;
   if (SCALE !== 1) return;
-  const real = SYSL.filter(s => !s.base && !s.ext && s.id !== 'device' && s.id !== 'cloud');
+  const real = SYSL.filter(s => !s.base && !s.ext && !s.infra && s.id !== 'device' && s.id !== 'cloud');
   if (real.length >= 2) for (const s of real) if (s.routes >= 3 && s.open === s.routes)
     s.cut = {kind:'no-callers', short:CUT_SHORT['no-callers'], text:`${s.name}: API ${s.routes}개를 내주는데 부르는 곳을 하나도 찾지 못했습니다. 이 서버를 부르는 앱의 호출을 읽지 못했거나 그 앱이 지도에 없습니다.`};
   for (const f of (MAN && MAN.summary && MAN.summary.findings) || []){ const s = SYS[f.id]; if (s && CUT_SHORT[f.kind] && !s.cut) s.cut = {kind:f.kind, short:CUT_SHORT[f.kind], text:f.text}; }
@@ -1488,11 +1588,17 @@ function renderInspector(){
   const roleSec = n ? `<section><h3>역할과 데이터 흐름 <em>미리 써 둔 요약</em></h3>${kv(n)}</section>`
     : an ? `<section><h3>역할과 데이터 흐름 <em>AI 생성 · 구조 정보 기반</em>${AI.state === 'on' ? '<button class="mini-act" data-act="ai-explain" data-refresh="1">다시 생성</button>' : ''}</h3>${kv(an)}</section>`
     : `<section><h3>역할 <em>정적 분석</em></h3><p>${esc(auto)}</p>${u.doc ? `<p class="src" style="margin-top:8px">${esc(u.doc)}</p><p class="note" style="margin-top:4px">코드에 적힌 주석 원문</p>` : ''}${busy ? `<div class="aibar" style="margin-top:10px"><span class="pulse"></span><span>AI가 이 유닛의 구조를 읽는 중</span></div>` : AI.state === 'on' && u.file ? `<div class="acts" style="margin-top:10px"><button class="act ai" data-act="ai-explain">AI 설명 생성</button></div>` : ''}${AI.noteErr && AI.noteErr.u === u.i ? `<p class="note" style="color:var(--err);margin-top:6px">${esc(AI.noteErr.msg)}</p>` : ''}</section>`;
+  const sysRow = (id, lab) => SYS[id] ? `<button class="xrow srow" data-sys="${esc(id)}" style="--c:${SYS[id].color}"><span class="k">${lab}</span><span class="n">${esc(SYS[id].name)}<span class="r">${esc(SYS[id].sub || '')}</span></span></button>` : '';
+  const infraSec = u.kind === 'infra' ? (() => {       // 웹서버·WAS: 사람이 적어 둔 정보를 보여 준다
+    const f = u.infra || {}, before = [...new Set((META.chains || []).map(c => c[c.indexOf(u.sys) - 1]).filter(Boolean))], callers = [...new Set((META.via || []).filter(v => v[2][0] === u.sys).map(v => v[0]))];
+    return `<section><h3>서버 구성 <em>코드가 아니라 사람이 적어 둔 정보</em></h3><dl class="kv"><dt>종류</dt><dd>${esc(INFRA[f.kind] || '서버 구성')}${f.product ? ' · ' + esc(f.product) : ''}</dd>${f.path && f.path.length ? `<dt>붙는 경로</dt><dd>${f.path.map(esc).join(', ')} <small style="color:var(--ink-dim)">· 앱은 이 경로를 붙여 부르고 서버 코드에는 없습니다</small></dd>` : ''}</dl>${u.doc ? `<p class="src" style="margin-top:8px">${esc(u.doc)}</p>` : ''}</section>
+    ${callers.length || before.length ? `<section><h3>앞 <em>여기로 들어오는 쪽</em></h3><div class="xlink">${callers.map(id => sysRow(id, '부름')).join('')}${before.map(id => sysRow(id, '앞단')).join('')}</div></section>` : ''}
+    ${(f.to || []).length ? `<section><h3>뒤 <em>여기서 넘기는 곳</em></h3><div class="xlink">${f.to.map(id => sysRow(id, '뒷단')).join('')}</div></section>` : `<section><p class="note">뒤에 있는 서버를 적지 않았습니다. 이 주소로 가는 요청은 여기서 끝나는 것으로 그립니다.</p></section>`}`; })() : '';
   const lits = [...new Set([...(u.lit||[]), ...u.m.flatMap(m => m.lit||[])])].sort((a,b) => (/[가-힣]/.test(b) ? 1 : 0) - (/[가-힣]/.test(a) ? 1 : 0)).slice(0,10);
   el.innerHTML = `<div class="side-head"${state.min ? ' data-act="min-insp"' : ''}><div><span class="crumb" style="color:${s.color}">${esc(s.name)} › ${esc(u.mod)}</span><h2>${esc(state.min && sm != null && u.m[sm] ? u.name + '.' + u.m[sm].n : u.name)}</h2></div>${minBtn()}<button class="x" data-act="close-insp" aria-label="설명 닫기">닫기</button></div>
   <div class="side-body">
-    <section><p class="path"><span class="badge" style="color:${K[3]}">${K[0]}</span> ${u.file ? `${esc(u.file)}:${u.line} · ${u.loc}줄` : '저장소 밖의 서비스'}${u.conf ? ` · ${u.conf.slice(0,4).map(esc).join(', ')}` : ''}</p></section>
-    ${roleSec}
+    <section><p class="path"><span class="badge" style="color:${K[3]}">${K[0]}</span> ${u.file ? `${esc(u.file)}:${u.line} · ${u.loc}줄` : u.kind === 'infra' ? '요청이 서버 코드에 닿기 전에 거치는 곳' : '저장소 밖의 서비스'}${u.conf ? ` · ${u.conf.slice(0,4).map(esc).join(', ')}` : ''}</p></section>
+    ${infraSec || roleSec}
     ${u.rt && RT ? `<section><h3>실측 응답 <em>${esc(RT.source)} · ${esc(RT.window)}</em></h3><div class="xlink">${u.rt.routes.map(x => `<button class="xrow" data-u="${u.i}" data-um="${x.mi}" style="--c:${x.bad ? RED : OKC}"><span class="k">${x.bad ? '비정상' : '정상'}</span><span class="n">${esc(x.route)}<span class="r codes">${codeChips(x.codes, RT.from)}${x.p95 ? `<span class="code">p95 ${x.p95}ms</span>` : ''}</span></span></button>`).join('')}</div></section>` : ''}
     ${lits.length ? `<section><h3>화면 문구·오류 코드 <em>코드 속 문자열</em></h3><div class="lits">${lits.map(t => `<span class="lit">${esc(t)}</span>`).join('')}</div></section>` : ''}
     ${xr ? `<section><h3>시스템을 넘는 연결</h3><div class="xlink">${xr}</div></section>` : ''}
@@ -1500,7 +1606,7 @@ function renderInspector(){
       <p class="note" style="margin-top:6px">같은 경로가 여러 서버에 있습니다. ${API.ok ? '설정에서 이 시스템이 부르는 서버를 정하면 다음 분석부터 이어집니다.' : '작업 공간 설정의 link.calls 에 이 시스템이 부르는 서버를 적으면 이어집니다.'}</p>${API.ok ? `<div class="acts" style="margin-top:8px"><button class="act" data-act="cfg">설정 열기</button></div>` : ''}</section>` : ''}
     ${inUse.length ? `<section><h3>여기로 들어오는 곳 <em>${inUse.length}</em></h3>${chipList(inUse, e => e.s, u)}</section>` : ''}
     ${outUse.length ? `<section><h3>여기서 나가는 곳 <em>${outUse.length}</em></h3>${chipList(outUse, e => e.t, u)}</section>` : ''}
-    ${u.m.length ? `<section><h3>${u.kind === 'table' || u.kind === 'enum' ? '필드' : '메서드'} <em>${u.m.length}</em></h3><div class="mlist">${u.m.map((m,i) => `<button class="mrow${sm === i ? ' on' : ''}" data-m="${i}"><span class="dot" style="background:${m.rt && m.rt.bad || (m.st && m.st.some(c => c[0] >= 400)) ? RED : m.route || m.h ? EK.http.c : m.db ? EK.db.c : 'transparent'}"></span><span class="n">${esc(m.k === 'field' ? m.s : m.n)}</span><span class="l">${m.rt && m.rt.bad && RT ? `<b>${esc(badText(m.rt, RT.from))}</b> ` : ''}${m.route ? esc(m.route) : m.k === 'field' ? '' : 'L' + m.l + (m.e > m.l ? '–' + m.e : '')}</span></button>${sm === i ? memberDetail(u, m) : ''}`).join('')}</div></section>` : ''}
+    ${u.m.length ? `<section><h3>${u.kind === 'table' || u.kind === 'enum' ? '필드' : u.kind === 'infra' ? '주소(인스턴스)' + (u.m.some(m => m.route) ? ' · 받는 요청' : '') : '메서드'} <em>${u.m.length}</em></h3><div class="mlist">${u.m.map((m,i) => `<button class="mrow${sm === i ? ' on' : ''}" data-m="${i}"><span class="dot" style="background:${m.rt && m.rt.bad || (m.st && m.st.some(c => c[0] >= 400)) ? RED : m.route || m.h ? EK.http.c : m.db ? EK.db.c : 'transparent'}"></span><span class="n">${esc(m.k === 'field' || m.k === 'inst' ? m.s : m.n)}</span><span class="l">${m.rt && m.rt.bad && RT ? `<b>${esc(badText(m.rt, RT.from))}</b> ` : ''}${m.route ? esc(m.route) : m.k === 'field' || m.k === 'inst' ? '' : 'L' + m.l + (m.e > m.l ? '–' + m.e : '')}</span></button>${sm === i ? memberDetail(u, m) : ''}`).join('')}</div></section>` : ''}
     ${u.nested ? `<section><h3>안에 든 타입</h3><p class="path">${u.nested.map(esc).join(' · ')}</p></section>` : ''}
     ${u.tests ? `<section><h3>관련 테스트</h3><p class="path">${u.tests.map(esc).join('<br>')}</p></section>` : ''}
     <section class="acts"><button class="act${state.impact && state.impact.root === u.i ? ' on' : ''}" data-act="impact">고치면 영향받는 곳</button><button class="act" data-act="goto">이 위치로 확대</button></section>
@@ -1523,7 +1629,7 @@ function memberDetail(u, m){
     ${calls ? `<div><h3>이 메서드가 부르는 곳</h3><div class="chips">${calls}</div></div>` : ''}
     ${db ? `<div><h3>건드리는 테이블</h3><div class="chips">${db}</div></div>` : ''}
     ${rtm}${exits}
-    ${!http && !callers && !calls && !db && !m.open && !exits ? `<p class="note">정적 분석으로 잡힌 호출 관계가 없습니다.</p>` : ''}</div>`;
+    ${m.k === 'inst' ? `<p class="note">이 주소로 가는 호출은 뒤에 있는 서버로 이어집니다.</p>` : !http && !callers && !calls && !db && !m.open && !exits ? `<p class="note">정적 분석으로 잡힌 호출 관계가 없습니다.</p>` : ''}</div>`;
 }
 function selectUnit(ui, mi=null, fly=false){
   if (state.sel && state.sel.u !== ui && !NAV.back){ NAV.hist.push([state.sel.u, state.sel.m]); if (NAV.hist.length > 60) NAV.hist.shift(); }
@@ -1608,6 +1714,7 @@ function edgePanel(e){
   <div class="side-body">
     <section><h3>양쪽 끝 <em>누르면 그쪽으로 이동</em></h3><div class="xlink">${end(a, '출발')}${end(b, '도착')}</div></section>
     ${e.routes ? `<section><h3>API</h3><p class="path">${e.routes.map(esc).join('<br>')}</p></section>` : ''}
+    ${e.via ? `<section><h3>거치는 곳 <em>서버 구성</em></h3><div class="xlink">${e.via.map(id => SYS[id] ? `<button class="xrow srow" data-sys="${esc(id)}" style="--c:${SYS[id].color}"><span class="k">${esc(({web:'웹서버', was:'WAS', gw:'게이트'})[SYS[id].infra] || '경유')}</span><span class="n">${esc(SYS[id].name)}<span class="r">${esc(SYS[id].sub || '')}</span></span></button>` : '').join('')}</div></section>` : ''}
     ${e.guess ? `<section><p class="note">추정한 연결입니다. 같은 경로가 다른 서버에도 있어, 이 시스템의 다른 호출이 몰리는 서버로 골랐습니다.</p></section>` : ''}
     ${e.keys ? `<section><h3>토픽·이벤트 이름</h3><p class="path">${e.keys.map(esc).join('<br>')}</p></section>` : ''}
     ${e.ops ? `<section><h3>DB 접근</h3><p>${{r:'읽기', w:'쓰기', rw:'읽기와 쓰기'}[e.ops] || ''}</p></section>` : ''}
@@ -1620,7 +1727,8 @@ function edgePanel(e){
 /* ───────────── 설정 패널 ─────────────
    atlas.py open 으로 띄운 로컬 서버에서만 켜진다(정적 파일로 올린 화면이나 아티팩트에서는 단추가 보이지 않는다).
    터미널 명령으로 하던 일(폴더 추가, 다시 분석, 로그 넣기)과 한 지도에 여러 제품을 둘 때 필요한 설정(서버 주소, 레거시, 부르는 서버)을 여기서 한다. */
-const CFG = {view:'main', ls:null, pre:null, err:'', msg:'', dirty:false, ext:null, timer:null, confirm:null, weak:false};
+const CFG = {view:'main', ls:null, pre:null, err:'', msg:'', dirty:false, ext:null, timer:null, confirm:null, weak:false, inf:null, pick:new Set(), envs:{}, grp:null, aif:null};
+const newInfra = kind => ({id:'', kind, name:'', product:'', rows:[{}], to:[], path:'', note:''});
 const lastDir = v => { try { if (v) sessionStorage.setItem('atlas-ls', v); return sessionStorage.getItem('atlas-ls') || ''; } catch (e){ return ''; } };
 async function initApi(){
   try { const r = await fetch('api/state', {cache:'no-store'}); if (!r || !r.ok) return; const d = await r.json(); if (d && d.token){ API.ok = true; API.token = d.token; API.st = d; } } catch (e){}
@@ -1634,7 +1742,7 @@ async function call(name, body){          // 실패하면 서버가 알려 준 �
   } catch (e){ CFG.err = '로컬 서버에 닿지 않습니다. atlas.py open 이 실행 중인지 확인하세요.'; return null; }
 }
 async function refreshState(){ try { const r = await fetch('api/state', {cache:'no-store'}); if (r.ok) API.st = await r.json(); } catch (e){} }
-async function openConfig(){ if (!API.ok) return; await refreshState(); CFG.view = 'main'; CFG.err = CFG.msg = ''; $('#cfg').hidden = false; renderConfig(); if (API.st.job.running) pollJob(); }
+async function openConfig(view, kind){ if (!API.ok) return; await refreshState(); CFG.view = view || 'main'; CFG.err = CFG.msg = ''; CFG.inf = kind ? newInfra(kind) : null; CFG.aif = null; $('#cfg').hidden = false; renderConfig(); if (API.st.job.running) pollJob(); if (kind){ const n = $('#n-name'); if (n) n.focus(); } }
 function closeConfig(){ $('#cfg').hidden = true; clearTimeout(CFG.timer); }
 function jobStatus(){
   const j = API.st.job, what = j.kind === 'ingest' ? '접속 로그 읽기' : '분석';
@@ -1643,12 +1751,96 @@ function jobStatus(){
   return (CFG.msg ? `<div class="aibar"><span>${esc(CFG.msg)}</span></div>` : '')
     + (CFG.dirty ? `<div class="aibar"><span>설정이 바뀌었습니다. 다시 분석해야 지도에 반영됩니다.</span><button class="mini-act" data-c="sync">다시 분석</button></div>` : '');
 }
+/* 지금 설정에 적힌 주소와, 분석이 코드에서 본 주소를 한 표로 모은다: 주소 → 주인(시스템·레거시·웹서버·WAS), 쓰는 곳, 환경·메모 */
+function hostTable(st){
+  const rows = new Map(), row = h => { let r = rows.get(h); if (!r){ r = {host:h, owner:'', users:new Set(), n:0, env:'', note:''}; rows.set(h, r); } return r; };
+  for (const e of [...st.systems, ...(st.external || []), ...(st.infra || [])]) for (const h of e.hosts || []){ const r = row(h), i = (e.host_info || {})[h] || {}; r.owner = e.id; r.env = i.env || ''; r.note = i.note || ''; }
+  const M = META || {};
+  for (const h of M.hosts_seen || []){ const r = row(h.host); for (const y of h.systems) r.users.add(y); }
+  for (const o of M.offmap || []){ const r = row(o.host); for (const y of o.systems) r.users.add(y); r.n += o.n; }
+  return [...rows.values()].sort((a,b) => (a.owner ? 1 : 0) - (b.owner ? 1 : 0) || b.n - a.n || (a.owner < b.owner ? -1 : a.owner > b.owner ? 1 : 0) || (a.host < b.host ? -1 : 1));
+}
+const envSelect = (attr, cur) => `<select ${attr} aria-label="환경">${[...new Set([...ENVS, cur || ''])].map(e => `<option value="${esc(e)}"${e === (cur || '') ? ' selected' : ''}>${e ? esc(e) : '환경'}</option>`).join('')}</select>`;
+/* 서버 구성: 웹서버·WAS 를 적어 두는 곳과, 주소(인스턴스)를 한 서버로 묶는 도구 */
+function infraView(st, sysName){
+  const nodes = st.infra || [], sum = st.summary.infra || {}, armed = id => CFG.confirm === 'inf:' + id;
+  const nameOf = id => { const n = nodes.find(n => n.id === id); return n ? n.name : sysName(id); };
+  const serves = new Set(UNITS.filter(u => u.m.some(m => m.route)).map(u => u.sys));
+  const servers = st.systems.filter(y => serves.has(y.id) || y.hosts.length || !serves.size);
+  const list = nodes.map(n => `<div class="crow"><span class="nm">${esc(n.name)}<small>${[INFRA[n.kind] || n.kind, n.product, (n.hosts || []).length ? '주소 ' + n.hosts.map(h => { const i = (n.host_info || {})[h]; return (i && i.env ? i.env + ' ' : '') + h; }).join(', ') : '주소 없음',
+      (n.to || []).length ? '뒤: ' + n.to.map(nameOf).join(', ') : '뒤에 있는 것 없음', (n.path || []).length ? '붙는 경로 ' + n.path.join(', ') : '', sum[n.id] && sum[n.id].calls ? '받은 호출 ' + sum[n.id].calls : ''].filter(Boolean).map(esc).join(' · ')}</small></span>
+      <button class="mini-act" data-c="n-edit" data-v="${esc(n.id)}">고치기</button><button class="mini-act" data-c="n-remove" data-v="${esc(n.id)}"${armed(n.id) ? ' style="color:#FF5A6A;border-color:#FF3B4E"' : ''}>${armed(n.id) ? '한 번 더 누르면 뺍니다' : '빼기'}</button></div>`).join('');
+  const F = CFG.inf;
+  const behind = F ? [...nodes.filter(n => n.id !== F.id).map(n => [n.id, n.name, INFRA[n.kind] || '']), ...servers.map(y => [y.id, y.name, '서버']), ...(st.external || []).map(x => [x.id, x.name, '레거시'])] : [];
+  const form = F ? `<div style="border:1px solid var(--line);padding:10px;margin-top:10px">
+      <div class="fl" style="margin-top:0"><span class="lb">종류 · 이름</span><div class="grow"><select id="n-kind" aria-label="종류">${Object.keys(INFRA).map(k => `<option value="${k}"${k === F.kind ? ' selected' : ''}>${INFRA[k]}</option>`).join('')}</select><input type="text" id="n-name" value="${esc(F.name)}" placeholder="이름 (예: 모바일 웹서버)" aria-label="이름"></div></div>
+      <div class="fl"><span class="lb">제품</span><div class="grow"><input type="text" id="n-product" list="n-products" value="${esc(F.product)}" placeholder="예: Nginx, Apache, Tomcat, JEUS" aria-label="제품"><datalist id="n-products">${['Apache', 'Nginx', 'IIS', 'WebtoB', 'OHS', 'Tomcat', 'JEUS', 'WebLogic', 'WebSphere', 'JBoss', 'Azure Application Gateway', 'Azure Front Door', 'Azure App Service', 'Azure API Management', 'L4 스위치'].map(x => `<option value="${x}">`).join('')}</datalist></div></div>
+      <div class="fl" style="align-items:flex-start"><span class="lb" style="padding-top:8px">주소(인스턴스)</span><div class="grow" id="n-rows">${F.rows.map((r,i) => `<div class="irow">${envSelect('data-f="env"', r.env)}<input type="text" data-f="host" value="${esc(r.host || '')}" placeholder="주소 (예: m.example.com, 10.0.0.5:8080)" spellcheck="false" aria-label="주소"><input type="text" data-f="note" value="${esc(r.note || '')}" placeholder="메모 (예: 1호기)" aria-label="메모"><button class="mini-act" data-c="n-row-del" data-v="${i}">지우기</button></div>`).join('')}<button class="mini-act" data-c="n-row">줄 추가</button></div></div>
+      <div class="fl" style="align-items:flex-start"><span class="lb" style="padding-top:5px">뒤에 있는 것</span><div class="grow">${behind.map(([id, nm, tag]) => `<label class="ck"><input type="checkbox" data-to="${esc(id)}"${F.to.includes(id) ? ' checked' : ''}>${esc(nm)} <small>${esc(tag)}</small></label>`).join('') || '<span class="note">아직 고를 서버가 없습니다. 폴더를 추가해 분석하거나 레거시를 등록한 뒤 고르세요.</span>'}</div></div>
+      <div class="fl"><span class="lb">붙는 경로</span><div class="grow"><input type="text" id="n-path" value="${esc(F.path)}" placeholder="예: /shop (WAS 컨텍스트 경로 · 프록시 경로). 없으면 비워 둡니다" spellcheck="false" aria-label="붙는 경로"></div></div>
+      <div class="fl"><span class="lb">메모</span><div class="grow"><input type="text" id="n-note" value="${esc(F.note)}" placeholder="담당, 위치, 주의할 점 등" aria-label="메모"></div></div>
+      <div class="acts" style="margin-top:10px"><button class="act on" data-c="n-save">저장</button><button class="act" data-c="n-cancel">취소</button></div>
+      <p class="note" style="margin-top:6px">"뒤에 있는 것"에는 이 ${esc(INFRA[F.kind] || '항목')}가 요청을 넘기는 곳을 고릅니다(웹서버라면 WAS, WAS 라면 서버 코드). 주소를 적어 두면 그 주소로 가는 호출이 뒤에 있는 서버에 붙습니다.</p></div>` : '';
+  const hosts = hostTable(st), G = CFG.grp || {}, picked = hosts.filter(r => CFG.pick.has(r.host)), same = picked.length && picked.every(r => r.owner && r.owner === picked[0].owner) ? picked[0].owner : '';
+  const to = G.to != null && G.to !== '' ? G.to : same;
+  const opt = (id, nm) => `<option value="${esc(id)}"${id === to ? ' selected' : ''}>${esc(nm)}</option>`;
+  const table = hosts.map(r => `<div class="crow"><label class="ck" style="border:0;padding:0"><input type="checkbox" data-pick="${esc(r.host)}"${CFG.pick.has(r.host) ? ' checked' : ''} aria-label="${esc(r.host)} 고르기"></label>
+      <span class="nm">${esc(r.host)}<small>${r.owner ? '지금: ' + esc(nameOf(r.owner)) : '<span style="color:#FFB454">어느 서버인지 정하지 않음</span>'}${r.users.size ? ' · 쓰는 곳: ' + [...r.users].map(sysName).map(esc).join(', ') : ''}${r.n ? ' · 호출 ' + r.n : ''}${r.note ? ' · ' + esc(r.note) : ''}</small></span>${envSelect(`data-env="${esc(r.host)}"`, r.host in CFG.envs ? CFG.envs[r.host] : r.env)}</div>`).join('');
+  return `<section><h3>웹서버 · WAS <em>${nodes.length ? nodes.length + '곳' : '요청이 서버 코드에 닿기 전에 거치는 곳'}</em></h3>${list || '<p class="note">아직 적어 둔 것이 없습니다. 앱은 웹서버의 주소로 요청을 보내고 서버 코드는 그 주소를 모릅니다. 그 사이를 여기에 적어 두면 지도에서 이어집니다.</p>'}
+      ${F ? form : `<div class="acts" style="margin-top:10px"><button class="act" data-c="n-new" data-v="web">웹서버 추가</button><button class="act" data-c="n-new" data-v="was">WAS 추가</button><button class="act" data-c="n-new" data-v="gw">게이트웨이 · L4 추가</button></div>`}</section>
+    <section><h3>주소 묶기 <em>인스턴스 여러 개를 한 서버로</em></h3>
+      <p class="note" style="margin-bottom:6px">개발·검증·운영처럼 주소만 다른 서버, 여러 대로 나뉜 서버를 지도에서 하나로 보이게 합니다. 같은 서버의 주소를 고르고 환경을 맞춘 뒤 묶을 서버를 정하세요. 따로 등록해 둔 레거시의 주소를 다 옮기면 그 레거시는 합쳐집니다.</p>
+      ${table || '<p class="note">코드에서 본 주소가 아직 없습니다. 아래 칸에 주소를 직접 적어 묶을 수 있습니다.</p>'}
+      <div class="cform" style="margin-top:10px"><input type="text" id="g-add" value="${esc(G.add || '')}" placeholder="목록에 없는 주소 더하기 (쉼표로 여러 개)" spellcheck="false" aria-label="목록에 없는 주소">
+        <select id="g-to" aria-label="묶을 서버"><option value="">새 서버로 등록 (레거시)</option>${servers.length ? `<optgroup label="지도 안 서버">${servers.map(y => opt(y.id, y.name)).join('')}</optgroup>` : ''}${nodes.length ? `<optgroup label="웹서버 · WAS">${nodes.map(n => opt(n.id, n.name)).join('')}</optgroup>` : ''}${(st.external || []).length ? `<optgroup label="레거시">${st.external.map(x => opt(x.id, x.name)).join('')}</optgroup>` : ''}</select>
+        <input type="text" id="g-name" value="${esc(G.name || '')}" placeholder="새 서버 이름 (새로 등록할 때)" style="flex:0 1 200px" aria-label="새 서버 이름"><button class="act on" data-c="grp">고른 주소를 한 서버로 묶기</button></div></section>
+    <section class="acts"><button class="act" data-c="view" data-v="main">설정으로 돌아가기</button></section>`;
+}
+/* AI 연결: TRACE 에 적은 문의를 어디로 보내 추적할지. 키는 서버가 받아 작업 공간 파일에만 두고 화면으로 돌려주지 않는다 */
+function aiView(st){
+  const a = st.ai || {}, f = Object.assign({provider:a.provider || '', base_url:a.base_url || '', resource:a.resource || '', auth:a.auth || 'bearer', model:a.model || '', quick_model:a.quick_model || '', max_chars:a.max_chars || '', key:''}, CFG.aif || {}), p = f.provider;
+  const status = !a.provider ? '아직 정하지 않았습니다. 지금은 TRACE 가 키워드 검색으로 동작합니다.' : a.on ? `켜져 있습니다 · ${a.using || ''}` : !a.enabled ? '꺼 두었습니다. 설정은 남아 있습니다.' : a.why;
+  const keyHint = a.key_from === 'env' ? '환경 변수 ATLAS_AI_KEY 의 키를 쓰는 중입니다' : a.has_key ? '저장된 키가 있습니다. 바꿀 때만 적으세요' : p === 'claude' ? '비워 두면 환경 변수 ANTHROPIC_API_KEY 나 ant 로그인 정보를 씁니다' : 'API 키';
+  const line = (lb, body) => `<div class="fl"><span class="lb">${lb}</span><div class="grow">${body}</div></div>`;
+  return `<section><h3>AI 연결 <em>TRACE 의 경로 추적 · 유닛 설명</em></h3>
+      <div class="aibar${a.on || !a.provider ? '' : ' err'}"><span>${esc(status)}</span>${a.provider && a.ready ? `<button class="mini-act" data-c="ai-toggle">${a.enabled ? '끄기' : '켜기'}</button>` : ''}</div>
+      ${line('방식', `<select id="ai-provider" aria-label="연결 방식">${[['', '쓰지 않음'], ['claude', 'Claude API'], ['foundry', 'Azure 의 Claude (Microsoft Foundry)'], ['openai', 'OpenAI 호환 엔드포인트 (사내 게이트웨이 등)']].map(([v, t]) => `<option value="${v}"${v === p ? ' selected' : ''}>${t}</option>`).join('')}</select>`)}
+      ${p && !a.sdk && p !== 'openai' ? `<div class="aibar err" style="margin-top:8px"><span>이 방식은 anthropic 패키지가 필요합니다. 저장소 폴더에서 <code>python3 -m venv .venv && .venv/bin/pip install -r requirements-ai.txt</code> 를 실행한 뒤 atlas.py open 을 다시 띄우세요.</span></div>` : ''}
+      ${p === 'claude' ? line('주소', `<input type="text" id="ai-url" value="${esc(f.base_url)}" placeholder="비워 두면 Anthropic 의 API. 같은 형식을 받는 사내 게이트웨이면 그 주소" spellcheck="false" aria-label="주소">`) : ''}
+      ${p === 'foundry' ? line('리소스', `<input type="text" id="ai-resource" value="${esc(f.resource)}" placeholder="Azure 리소스 이름" spellcheck="false" aria-label="Azure 리소스 이름">`) : ''}
+      ${p === 'openai' ? line('주소', `<input type="text" id="ai-url" value="${esc(f.base_url)}" placeholder="예: https://llm.example.com/v1 (뒤에 /chat/completions 를 붙여 부릅니다)" spellcheck="false" aria-label="엔드포인트 주소"><select id="ai-auth" aria-label="키를 보내는 방법"><option value="bearer"${f.auth !== 'api-key' ? ' selected' : ''}>Authorization: Bearer</option><option value="api-key"${f.auth === 'api-key' ? ' selected' : ''}>api-key 헤더</option></select>`) : ''}
+      ${p ? line('모델', `<input type="text" id="ai-model" value="${esc(f.model)}" placeholder="${p === 'claude' ? '비워 두면 ' + esc(a.default_model || '') : p === 'foundry' ? 'Azure 에 만든 배포 이름' : '모델 또는 배포 이름'}" spellcheck="false" aria-label="모델"><input type="text" id="ai-quick" value="${esc(f.quick_model)}" placeholder="빠른 모델 (선택) · 후보 고르기와 유닛 설명에" spellcheck="false" aria-label="빠른 모델">`)
+        + line('키', `<input type="password" id="ai-key" value="${esc(f.key || '')}" autocomplete="off" placeholder="${esc(keyHint)}" aria-label="API 키">${a.key_from === 'file' ? `<button class="mini-act" data-c="ai-clear-key">저장된 키 지우기</button>` : ''}`)
+        + line('한 번에 보내는 크기', `<input type="text" id="ai-max" value="${esc(String(f.max_chars || ''))}" style="flex:0 1 120px" aria-label="한 번에 보내는 크기(글자 수)"><span class="note">글자 수. 지도가 이보다 크면 모듈 단계로 먼저 좁혀 나눠 보냅니다. 받는 길이가 짧은 모델이면 줄이세요.</span>`) : ''}
+      <div class="acts" style="margin-top:12px"><button class="act on" data-c="ai-save">저장</button>${p ? `<button class="act" data-c="ai-test">저장하고 연결 시험</button>` : ''}</div>
+      <p class="note" style="margin-top:8px">켜 두면 TRACE 에 적은 문의와 함께 구조 정보(유닛·메서드 이름, 시그니처, 주석, 호출 관계, API 경로, 코드 속 문자열)가 위 주소로 나갑니다. 코드 본문과 서버 구성의 주소는 보내지 않습니다. 회사 코드라면 그 정보를 내보내도 되는 곳인지 먼저 확인하세요. 키는 이 컴퓨터의 작업 공간 폴더(atlas-ai.json)에만 두고 화면으로 다시 내주지 않습니다.</p></section>
+    <section class="acts"><button class="act" data-c="view" data-v="main">설정으로 돌아가기</button></section>`;
+}
+/* 다시 그리기 전에, 치던 내용을 잃지 않게 입력칸의 값을 담아 둔다 */
+function snapForms(){
+  const q = sel => [...document.querySelectorAll('#cfg ' + sel)], val = id => { const x = $('#' + id); return x ? x.value.trim() : null; };
+  if (CFG.inf && $('#n-name')){
+    const F = CFG.inf; F.kind = val('n-kind') || F.kind; F.name = val('n-name'); F.product = val('n-product'); F.path = val('n-path'); F.note = val('n-note');
+    F.rows = q('#n-rows .irow').map(r => ({env:r.querySelector('[data-f=env]').value, host:r.querySelector('[data-f=host]').value.trim(), note:r.querySelector('[data-f=note]').value.trim()}));
+    F.to = q('input[data-to]').filter(x => x.checked).map(x => x.dataset.to);
+  }
+  if ($('#g-to')){
+    CFG.pick = new Set(q('input[data-pick]').filter(x => x.checked).map(x => x.dataset.pick));
+    for (const x of q('select[data-env]')) CFG.envs[x.dataset.env] = x.value;
+    CFG.grp = {add:val('g-add'), to:val('g-to'), name:val('g-name')};
+  }
+  if ($('#ai-provider')){
+    const cur = {provider:val('ai-provider'), base_url:val('ai-url'), resource:val('ai-resource'), auth:val('ai-auth'), model:val('ai-model'), quick_model:val('ai-quick'), key:val('ai-key'), max_chars:val('ai-max')};
+    CFG.aif = CFG.aif || {}; for (const k in cur) if (cur[k] != null) CFG.aif[k] = cur[k];
+  }
+}
 function renderConfig(){
   const st = API.st, el = $('#cfgbox'), M = META || {};
-  const sysName = id => { const y = st.systems.find(y => y.id === id) || (st.external || []).find(x => x.id === id); return y ? y.name : id; };
-  const head = `<div class="side-head"><div><span class="eyebrow">설정</span><h2>${esc(st.name || '작업 공간')}</h2></div><button class="x" data-c="close" aria-label="설정 닫기">닫기</button></div>`;
+  const sysName = id => { const y = st.systems.find(y => y.id === id) || (st.external || []).find(x => x.id === id) || (st.infra || []).find(n => n.id === id); return y ? y.name : id; };
+  const head = `<div class="side-head"><div><span class="eyebrow">${CFG.view === 'infra' ? '설정 › 서버 구성' : CFG.view === 'ai' ? '설정 › AI 연결' : '설정'}</span><h2>${esc(st.name || '작업 공간')}</h2></div><button class="x" data-c="close" aria-label="설정 닫기">닫기</button></div>`;
   const twins = (st.summary.twins || []).map(([a, b]) => `<div class="aibar err"><span>${esc(sysName(a))} 와 ${esc(sysName(b))} 의 API 목록이 똑같습니다. 같은 서버를 두 번 넣었다면 하나를 빼야 지도에 하나로 나옵니다.</span></div>`).join('');
   const top = `<div id="cfg-status">${jobStatus()}</div>${CFG.err ? `<div class="aibar err"><span>${esc(CFG.err)}</span></div>` : ''}${twins}`;
+  if (CFG.view === 'infra' || CFG.view === 'ai'){ el.innerHTML = head + `<div class="side-body">${top}${CFG.view === 'ai' ? aiView(st) : infraView(st, sysName)}</div>`; return; }
   if (CFG.view === 'add'){
     const ls = CFG.ls, pre = CFG.pre;
     el.innerHTML = head + `<div class="side-body">${top}
@@ -1700,6 +1892,7 @@ function renderConfig(){
   el.innerHTML = head + `<div class="side-body">${top}
     <section><h3>소스 폴더 <em>${st.sources.length}</em></h3>${src}<div class="acts" style="margin-top:10px"><button class="act" data-c="open-add">폴더 추가</button><button class="act" data-c="sync">다시 분석</button></div>
       <p class="note" style="margin-top:6px">마지막 분석 ${esc((st.built_at || '없음').replace('T', ' '))} · 유닛 ${(st.summary.units || 0).toLocaleString()} · 연결 ${(st.summary.edges || 0).toLocaleString()}. 같은 서버는 한 번만 넣어야 지도에 하나로 나옵니다.</p></section>
+    <section><h3>서버 구성 · AI <em>${(st.infra || []).length ? '웹서버 · WAS ' + st.infra.length + '곳' : '코드에 없는 것을 적어 둡니다'}</em></h3><div class="acts"><button class="act" data-c="view" data-v="infra">웹서버 · WAS · 주소 묶기</button><button class="act" data-c="view" data-v="ai">AI 연결${st.ai && st.ai.on ? ' · 켜짐' : ''}</button></div></section>
     ${diag}
     ${unread}
     ${pend || rules ? `<section>${pend ? `<h3 style="color:#FFB454">확인이 필요한 호출 <em>어느 서버를 부르는지 정해 주세요</em></h3>` : `<h3>부르는 서버 지정 <em>${rules ? '정해 둔 것' : ''}</em></h3>`}${pend}${rules}</section>` : ''}
@@ -1729,8 +1922,37 @@ function bindConfig(){
     const c = t.dataset.c, v = t.dataset.v, val = id => { const x = $('#' + id); return x ? x.value.trim() : ''; };
     const armed = CFG.confirm; CFG.confirm = null;
     if (c === 'close'){ closeConfig(); return; }
+    snapForms();
     if (c !== 'sync') CFG.msg = '';
-    if (c === 'open-add'){ CFG.view = 'add'; CFG.pre = null; CFG.ls = await call('ls', {path:CFG.ls ? CFG.ls.path : lastDir()}) || await call('ls', {}); }
+    if (c === 'view'){ CFG.view = v; CFG.err = ''; CFG.inf = null; CFG.aif = null; }
+    else if (c === 'n-new'){ CFG.inf = newInfra(v); }
+    else if (c === 'n-edit'){ const n = (API.st.infra || []).find(n => n.id === v); if (n) CFG.inf = {id:n.id, kind:n.kind, name:n.name, product:n.product || '', rows:(n.hosts || []).map(h => Object.assign({host:h}, (n.host_info || {})[h] || {})).concat([{}]), to:(n.to || []).slice(), path:(n.path || []).join(', '), note:n.note || ''}; }
+    else if (c === 'n-row'){ CFG.inf.rows.push({}); }
+    else if (c === 'n-row-del'){ CFG.inf.rows.splice(+v, 1); if (!CFG.inf.rows.length) CFG.inf.rows.push({}); }
+    else if (c === 'n-cancel'){ CFG.inf = null; CFG.err = ''; }
+    else if (c === 'n-save'){
+      const F = CFG.inf, r = await call('infra', {id:F.id, kind:F.kind, name:F.name, product:F.product, instances:F.rows.filter(x => x.host), to:F.to, path:F.path, note:F.note});
+      if (r){ CFG.inf = null; CFG.dirty = true; CFG.msg = `${F.name} 을(를) 저장했습니다.` + (r.moved ? ` 다른 곳에 있던 주소 ${r.moved}개를 이쪽으로 옮겼습니다.` : ''); }
+    }
+    else if (c === 'n-remove'){ if (armed !== 'inf:' + v) CFG.confirm = 'inf:' + v; else if (await call('infra', {remove:v})) CFG.dirty = true; }
+    else if (c === 'grp'){
+      const G = CFG.grp || {}, known = new Map(hostTable(API.st).map(r => [r.host, r]));
+      const inst = [...CFG.pick].map(h => ({host:h, env:h in CFG.envs ? CFG.envs[h] : (known.get(h) || {}).env || '', note:(known.get(h) || {}).note || ''})).concat((G.add || '').split(/[,\s]+/).filter(Boolean).map(h => ({host:h})));
+      const r = await call('group', {instances:inst, to:G.to || '', name:G.name || ''});
+      if (r){ CFG.pick = new Set(); CFG.envs = {}; CFG.grp = null; CFG.dirty = true; CFG.msg = `주소 ${inst.length}개를 한 서버로 묶었습니다.` + (r.merged && r.merged.length ? ` 주소가 다 옮겨 간 레거시 ${r.merged.length}개는 합쳤습니다.` : ''); }
+    }
+    else if (c === 'ai-save' || c === 'ai-test'){
+      const f = CFG.aif || {}, body = {provider:f.provider || '', base_url:f.base_url || '', resource:f.resource || '', auth:f.auth || 'bearer', model:f.model || '', quick_model:f.quick_model || '', max_chars:f.max_chars || ''};
+      if (f.key) body.key = f.key;
+      const r = await call('ai-config', body);
+      if (r){
+        CFG.aif = null; CFG.msg = '저장했습니다.'; API.st.ai = r.ai;
+        if (c === 'ai-test'){ CFG.msg = '연결을 시험하는 중입니다…'; renderConfig(); const t = await call('ai-test'); CFG.msg = t ? `연결되었습니다 · 모델 ${t.model}` : ''; }
+      }
+    }
+    else if (c === 'ai-toggle'){ await call('ai-config', {enabled:!API.st.ai.enabled}); }
+    else if (c === 'ai-clear-key'){ if (await call('ai-config', {clear_key:true})) CFG.msg = '저장된 키를 지웠습니다.'; }
+    else if (c === 'open-add'){ CFG.view = 'add'; CFG.pre = null; CFG.ls = await call('ls', {path:CFG.ls ? CFG.ls.path : lastDir()}) || await call('ls', {}); }
     else if (c === 'back'){ CFG.view = 'main'; CFG.err = ''; }
     else if (c === 'ls'){ const r = await call('ls', v === '..' ? {path:CFG.ls.parent} : {path:CFG.ls.path, child:v}); if (r){ CFG.ls = r; CFG.pre = null; } }
     else if (c === 'ls-go'){ const r = await call('ls', {path:val('add-path')}); if (r){ CFG.ls = r; CFG.pre = null; } }
@@ -1760,8 +1982,11 @@ function bindConfig(){
     else if (c === 'ingest'){ await startJob('ingest', {path:val('log-path')}); }
     if (CFG.ls) lastDir(CFG.ls.path);
     const keep = CFG.err; await refreshState(); CFG.err = keep; renderConfig();
+    if (c.startsWith('ai-')){ await initAI(); renderTrace(); }      // AI 를 켜고 끈 것이 TRACE 에 바로 반영되게
     if (c === 'ext-from'){ const n = $('#x-name'); if (n) n.focus(); }
+    if (c === 'n-new'){ const n = $('#n-name'); if (n) n.focus(); }
   });
+  $('#cfg').addEventListener('change', e => { if (e.target.id === 'ai-provider' || e.target.id === 'n-kind'){ snapForms(); renderConfig(); } });      // 방식·종류에 따라 칸이 달라진다
 }
 
 /* ───────────── 현행화 정보: 최근 변경과 새 버전 알림 ───────────── */
@@ -1827,7 +2052,8 @@ function applyRuntime(d){
       if (e.g !== 'http' || !e.routes) continue; const t = UNITS[e.t], a = UNITS[e.s]; if (!t.rt) continue;
       let n = 0, bad = 0; for (const x of t.rt.routes) if (e.routes.includes(x.route)){ n += x.n; bad += x.bad; }
       if (!n) continue; e.rt = {n, bad};
-      for (const g of [se.get(a.sys+'|'+t.sys+'|http'), a.module !== t.module ? me.get(a.module.idx+'|'+t.module.idx+'|http') : null]) if (g){ g.rt = g.rt || {n:0, bad:0}; g.rt.n += n; g.rt.bad += bad; }
+      const hops = e.via ? [a.sys, ...e.via, t.sys] : [a.sys, t.sys], gs = hops.slice(1).map((h,i) => se.get(hops[i]+'|'+h+'|http'));
+      for (const g of [...gs, a.module !== t.module ? me.get(a.module.idx+'|'+t.module.idx+'|http') : null]) if (g){ g.rt = g.rt || {n:0, bad:0}; g.rt.n += n; g.rt.bad += bad; }
     }
     const badUnits = []; for (const u of UNITS) if (u.rt && u.rt.bad){ u.module.rtBad++; SYS[u.sys].rtBad++; badUnits.push(u); }
     RT = {from, list:list.sort((a,b) => b.bad-a.bad || b.n-a.n), badUnits:badUnits.sort((a,b) => b.rt.bad-a.rt.bad), total:+d.total||0, matched:+d.matched||0,
@@ -2008,6 +2234,9 @@ function bindInput(){
     else if (t.dataset.act === 'arrange') setArrange(!state.arrange);
     else if (t.dataset.act === 'arrange-reset') resetArrange();
     else if (t.dataset.act === 'cfg') openConfig();
+    else if (t.dataset.act === 'cfg-infra') openConfig('infra');
+    else if (t.dataset.act === 'cfg-web' || t.dataset.act === 'cfg-was') openConfig('infra', t.dataset.act.slice(4));
+    else if (t.dataset.act === 'cfg-ai') openConfig('ai');
     else if (t.dataset.sys != null){ const sy = SYS[t.dataset.sys]; if (sy){ fitRect(sy, {pad:1.08, maxZ:0.5}); if (innerWidth <= 860){ state.nav = false; renderTrace(); } } }
     else if (t.dataset.act === 'close-insp'){ state.sel = null; state.edge = null; computeFocus(); renderInspector(); }
     else if (t.dataset.act === 'step-prev' || t.dataset.act === 'step-next'){ const tr = state.trace, f = t.dataset.act === 'step-next'; if (tr) gotoStep(tr.cur == null ? (f ? 0 : tr.steps.length-1) : tr.cur + (f ? 1 : -1)); }
@@ -2156,7 +2385,7 @@ async function boot(){
   checkRuntime(); setInterval(checkRuntime, 10000);
 }
 /* 시험용 손잡이: 주소에 ?debug 를 붙여 열었을 때만 안쪽 상태를 내놓는다 (tests/ui-check.js 가 쓴다) */
-if (/[?&]debug\b/.test(location.search)) window.__T = {cam, API, CFG, get state(){ return state; }, get UNITS(){ return UNITS; }, get EDGES(){ return EDGES; }, get SYS(){ return SYS; }, get SYSL(){ return SYSL; }, get META(){ return META; }, get POS(){ return POS; }};
+if (/[?&]debug\b/.test(location.search)) window.__T = {cam, API, CFG, AI, get state(){ return state; }, get UNITS(){ return UNITS; }, get EDGES(){ return EDGES; }, get SYS(){ return SYS; }, get SYSL(){ return SYSL; }, get META(){ return META; }, get POS(){ return POS; }};
 boot().catch(err => { $('#boot').textContent = '데이터를 불러오지 못했습니다: ' + err.message; });
 })();
 </script>

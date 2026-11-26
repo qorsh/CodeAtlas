@@ -233,6 +233,7 @@ atlas-data.json
 atlas-manifest.json
 atlas-notes.json
 atlas-runtime.json
+atlas-ai.json
 atlas-store/
 /site/
 /screens/

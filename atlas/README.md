@@ -133,6 +133,9 @@ SITTER_SPECS['go'] = dict(
                "roots": ["src/main/java"], "tests": [["src/test/java", ".java"]], "db": "orders-db",
                "hosts": ["api.example.com", "order-service"], "prefix": ["/shop"]}],
   "external": [{"id": "erp", "name": "레거시 ERP", "hosts": ["erp.example.com"], "paths": ["/erp/**"], "clients": "Erp\\w*Client"}],
+  "infra": [{"id": "web", "kind": "web", "name": "모바일 웹서버", "product": "Nginx", "hosts": ["m.example.com", "dev-m.example.com"],
+             "host_info": {"m.example.com": {"env": "운영"}, "dev-m.example.com": {"env": "개발", "note": "사내망"}}, "to": ["was"]},
+            {"id": "was", "kind": "was", "name": "주문 WAS", "product": "Tomcat", "hosts": ["10.0.0.5:8080"], "path": ["/shop"], "to": ["server"]}],
   "link": {"twins": [["android", "ios"]], "calls": {"admin-web": ["server"]}, "never": {"admin-web": ["other-server"]}}
 }
 ```
@@ -142,6 +145,10 @@ SITTER_SPECS['go'] = dict(
 - `systems[].hosts`: 이 서버에 닿는 주소. 호출에 이 주소가 적혀 있으면 경로가 다른 서버와 겹쳐도 이 서버 안에서만 찾는다. 포트를 안 적으면 어느 포트든 맞고 `*.example.com` 꼴도 된다. 개발·운영·검증 주소를 모두 적어 둔다. 코드가 주소를 실행할 때 고르더라도(`${base()}/x`, 환경별 상수), 그 시스템의 코드에 적힌 주소의 주인이 이 서버 하나면 겹치는 경로의 호출이 이 서버에 붙는다.
 - `systems[].prefix`: 게이트웨이가 경로 앞에 붙이는 접두어. `/shop/api/orders` 로 부르는 호출을 이 서버의 `/api/orders` 에 맞춘다.
 - `external`: 소스 없이 지도에 올리는 시스템(레거시). `hosts`(주소), `paths`(경로 꼴. `*` 는 조각 하나, `**` 는 나머지 전부), `clients`(호출하는 유닛 이름의 정규식) 가운데 하나라도 맞는 호출이 이쪽으로 간다. 시스템마다 유닛 하나가 생기고 우리가 부르는 API 가 멤버가 된다.
+- `infra`: 서버 구성. 요청이 서버 코드에 닿기 전에 거치는 웹서버(`web`) · WAS(`was`) · 게이트웨이(`gw`)를 사람이 적는다. `hosts` 는 그 항목의 주소, `to` 는 뒤에 있는 것(다른 항목, 시스템, 레거시의 id), `path` 는 앞에서 붙는 경로(WAS 컨텍스트 경로, 프록시 경로)다.
+  항목의 주소로 가는 호출은 `to` 를 따라가 닿는 서버들 안에서만 찾고, `path` 는 `prefix` 처럼 떼고 맞춘다. `to` 가 비어 있으면 레거시처럼 그 항목에서 끝난다. 결과에는 항목마다 시스템 하나와 유닛 하나가 생기고(멤버는 주소), `meta.chains`(맨 앞 항목에서 서버까지의 길)와 `meta.via`(부르는 시스템, 불리는 시스템, 거치는 항목들)가 붙는다.
+  어느 길인지는 부르는 시스템의 코드에 그 길 위 항목의 주소가 적혀 있는지로 가린다. 적힌 것이 없으면 그 서버로 들어가는 길이 하나뿐일 때만 그 길로 보고, 서버 자신의 주소(`systems[].hosts`)를 적어 둔 시스템은 거치지 않는 것으로 본다. 풀이는 `atlas.py` 의 `infra_view` 에 있다.
+- `host_info`: 주소별 환경(운영·검증·개발 등)과 메모. `systems` · `external` · `infra` 어디에나 붙고, 표시에만 쓴다. 주소 하나는 한 곳에만 둔다(화면의 "주소 묶기"가 옮겨 준다).
 - `link.calls`: 경로가 여러 서버에 맞을 때 고를 서버(앞에 적은 것 먼저). `link.never`: 잇지 않을 서버.
 
 경로가 그대로는 어느 서버와도 맞지 않는 호출은 접두어를 추정해 맞춘다. 호출 앞에 무언가 더 붙었거나(게이트웨이·WAS 의 컨텍스트 경로) 앞부분이 빠진(기준 주소에 경로가 든) 꼴인데, 같은 접두어로 맞는 호출이 셋 이상(또는 그 시스템의 못 맞춘 호출 절반 이상이면서 둘 이상)일 때만 받아들인다. 맞춘 접두어와 시스템별 집계는 `atlas-manifest.json` 의 `summary.diag` 에 남고 `diagnose` 명령과 설정 패널이 보여 준다.
@@ -199,6 +206,17 @@ SITTER_SPECS['go'] = dict(
 - **캐시**: 묶음마다 엔진·규칙 버전, 설정, 파일 내용의 해시를 기록한다. 하나라도 바뀐 묶음만 다시 분석하고, 연결 단계는 저장된 접점만으로 다시 맞춘다.
 - **접근 제어**는 이 도구가 하지 않는다. `site` 로 만든 폴더를 사내 로그인 뒤에 올린다. 혼자 볼 때는 `open` 을 쓴다(127.0.0.1 에서만 열린다). `python3 -m http.server` 는 기본으로 같은 네트워크의 다른 컴퓨터에도 열리므로 쓰지 않는다.
 - **분석 대상의 내용은 도구 저장소에 넣지 않는다.** 설정·결과·캐시·메모·제품 전용 규칙은 작업 공간에만 두고, 커밋 전에 `python3 tests/leak_check.py` 로 확인한다.
+
+## AI 연결: `ai.py`
+
+`open` 으로 띄운 로컬 서버가 화면의 요청(`POST /api/ai`)을 받아 정해 둔 곳으로 넘긴다. 분석(`sync`)은 AI 없이 돌고, 이 모듈은 서버를 띄울 때만 읽는다.
+
+- 설정은 작업 공간의 `atlas-ai.json` 에 둔다(git 제외, 이 사용자만 읽는 권한). 화면의 "AI 연결 설정"(`POST /api/ai-config`)이 고치고, 키는 `/api/state` 로 내주지 않는다(있는지만 알려 준다). 환경 변수 `ATLAS_AI_KEY` 가 있으면 파일의 키보다 먼저 쓴다.
+- `provider`: `claude`(Claude API. `base_url` 을 적으면 같은 형식의 게이트웨이), `foundry`(Azure 의 Claude. `resource` 와 배포 이름), `openai`(OpenAI 호환 `…/chat/completions`. `auth` 는 `bearer` 또는 `api-key`).
+- `claude` · `foundry` 는 공식 SDK(`anthropic`)로 보낸다. 스트리밍으로 받아 끝난 메시지만 쓰고, 생각 깊이는 `output_config.effort` 로 준다(후보 고르기·유닛 설명은 `low`, 경로 추적은 `medium`). 옛 모델이나 게이트웨이가 선택 항목을 거절하면 빼고 한 번 더 보낸다. `stop_reason` 이 `refusal` 이면 답을 쓰지 않는다.
+- `openai` 는 표준 라이브러리로 보낸다. 설치가 필요 없다.
+- `max_chars`: 화면이 한 번에 보내는 글의 한도. 유닛 목록이 이보다 길면 화면이 모듈 단계를 먼저 거친다.
+- AI 요청은 한꺼번에 셋까지만 받는다. 다른 `/api/…` 와 마찬가지로 토큰과 Host 를 확인한다.
 
 ## 알아 둘 한계
 

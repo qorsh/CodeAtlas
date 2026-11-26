@@ -16,6 +16,7 @@
   engine/*.py    공통 엔진: 이름 풀기, 사실(어노테이션·문자열 인자 호출) 추출, 규칙 적용.
   rules/*.json   규칙 팩: 프레임워크 지식. 사실 → 접점(제공/사용하는 API·테이블·토픽).
   이 파일          설정·소스 관리, 묶음별 캐시, 접점끼리 잇는 연결기, 결과 게시.
+  ai.py          AI 연결: open 으로 띄운 화면의 TRACE 요청을 정해 둔 곳(Claude API, Azure 의 Claude, 사내 엔드포인트)으로 넘긴다. 분석은 AI 없이 돈다.
 묶음(같은 이름공간을 쓰는 시스템들)마다 파일 내용 해시를 기록해, 바뀐 묶음만 다시 분석한다.
 연결 단계는 저장된 접점만 보고 다시 맞추므로 소스 코드를 읽지 않는다.
 """
@@ -114,18 +115,26 @@ def language_table(parser='auto'):
 
 
 def use_project_venv():
-    """저장소의 .venv 에 tree-sitter 가 깔려 있으면 그 파이썬으로 다시 실행한다.
+    """저장소의 .venv 에 선택 설치(tree-sitter, AI 연결용 anthropic)가 깔려 있으면 그 파이썬으로 다시 실행한다.
     어떤 파이썬으로 부르든 같은 파서로 분석돼야 결과와 캐시가 흔들리지 않는다. ATLAS_NO_VENV=1 이면 하지 않는다."""
+    import importlib.util
     venv = os.path.join(os.path.dirname(HERE), '.venv')
     py = next((p for p in (os.path.join(venv, 'bin', 'python'), os.path.join(venv, 'Scripts', 'python.exe')) if os.path.exists(p)), None)
     if not py or os.environ.get('ATLAS_NO_VENV') or os.path.realpath(sys.prefix) == os.path.realpath(venv):
         return
-    try:
-        import tree_sitter  # noqa: F401
-        return
-    except ImportError:
-        pass
+    in_venv = lambda name: bool(glob.glob(os.path.join(venv, 'lib', 'python*', 'site-packages', name)) or glob.glob(os.path.join(venv, 'Lib', 'site-packages', name)))
+    if importlib.util.find_spec('tree_sitter') and (importlib.util.find_spec('anthropic') or not in_venv('anthropic')):
+        return                            # 지금 파이썬에 이미 다 있다
     os.execv(py, [py] + sys.argv)
+
+
+def load_ai():
+    """AI 연결 모듈(atlas/ai.py). 로컬 서버를 띄울 때만 읽는다: 분석은 AI 없이 돈다."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('atlas_ai', os.path.join(HERE, 'ai.py'))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 # ───────────────────────────── 설정 · 소스 ─────────────────────────────
@@ -319,11 +328,61 @@ def glob_segs(pattern, segs):
     return len(ps) == len(segs)
 
 
+INFRA_KINDS = {'web': '웹서버', 'was': 'WAS', 'gw': '게이트웨이·L4'}
+
+
+def infra_view(cfg):
+    """서버 구성(설정의 infra: 웹서버·WAS·게이트웨이)을 연결기가 쓰기 좋게 풀어 둔다.
+
+    앱은 웹서버의 주소로 요청을 보내고 서버 코드는 그 주소를 모른다. 그 사이를 사람이 적어 둔 것이 infra 다:
+    각 항목은 주소(hosts), 뒤에 있는 것(to: 다른 infra·시스템·레거시의 id), 앞에서 붙는 경로(path: 프록시 경로·컨텍스트 경로)를 가진다.
+      reach[nid]  그 항목 뒤로 따라가면 닿는 끝(시스템·레거시, 그리고 뒤가 비어 있는 항목 자신)들
+      ends        뒤가 비어 있는 항목. 그 주소로 가는 호출은 레거시처럼 그 항목에서 끝난다
+      prefix[sid] 그 시스템으로 들어오는 길에서 경로 앞에 붙는 것들 (길마다 하나씩, 그리고 이어 붙인 것)
+      chains      맨 앞 항목에서 끝까지의 길 [nid, …, 끝 id]
+      paths[끝]   그 끝으로 들어오는 길들. 중간 항목에서 시작하는 것도 든다(주소가 중간 항목의 것일 수 있다)"""
+    nodes = {n['id']: n for n in cfg.get('infra', []) if n.get('id')}
+    terminals = {s['id'] for s in cfg['systems']} | {x['id'] for x in cfg.get('external', [])}
+    nxt = {nid: [t for t in n.get('to', []) if t != nid and (t in nodes or t in terminals)] for nid, n in nodes.items()}
+    ends = {nid for nid, ts in nxt.items() if not ts}
+    walks = {}                    # nid → 그 항목에서 시작하는 길들 [nid, …, 끝]
+
+    def walk(nid, trail):
+        if nid in walks and not trail:
+            return walks[nid]
+        out = []
+        for t in nxt[nid]:
+            if t in trail or t == nid:
+                continue              # 돌고 도는 설정은 거기서 끊는다
+            if t in nodes and t not in ends:
+                out += [[nid] + w for w in walk(t, trail | {nid})]
+            else:
+                out.append([nid, t])
+        if not trail:
+            walks[nid] = out
+        return out
+    for nid in nodes:
+        walk(nid, frozenset())
+    reach = {nid: ({w[-1] for w in ws} or {nid}) for nid, ws in walks.items()}
+    pointed = {t for ts in nxt.values() for t in ts}
+    chains = [w for nid in nodes if nid not in pointed for w in walks[nid]]
+    paths, prefix = {}, {}
+    for ws in walks.values():
+        for w in ws:
+            paths.setdefault(w[-1], []).append(w[:-1])
+            pres = [p for nid in w[:-1] for p in nodes[nid].get('path', [])[:1]]
+            for cand in [''.join(pres)] + [p for nid in w[:-1] for p in nodes[nid].get('path', [])]:
+                if cand and cand != '/' and cand not in prefix.setdefault(w[-1], []):
+                    prefix[w[-1]].append(cand)
+    return dict(nodes=nodes, reach=reach, ends=ends, chains=chains, paths=paths, prefix=prefix)
+
+
 def resolve_calls(cfg, units, routes, http, hosts):
     """API 호출 후보마다 대상을 정한다. 근거가 강한 순서:
 
       레거시 선언   설정의 external 에 적은 주소·경로 꼴·클라이언트 이름에 맞으면 그 시스템으로 (지도 안 서버와 경로가 겹쳐도 선언이 이긴다)
-      주소          호출에 적힌 주소가 어느 서버의 hosts 에 있으면 그 서버 안에서만 찾는다
+      주소          호출에 적힌 주소가 어느 서버의 hosts 에 있으면 그 서버 안에서만 찾는다.
+                    서버 구성(infra)에 적은 웹서버·WAS 의 주소면 그 뒤에 있는 서버 안에서만 찾는다
       하나뿐        경로가 맞는 서버가 하나뿐이다
       설정          link.calls[부르는 시스템] 에 적힌 순서로 고른다 · link.never[부르는 시스템] 은 후보에서 뺀다
       자기 자신     경로만 쓴 호출이고 자기 시스템에 그 라우트가 있다
@@ -334,18 +393,25 @@ def resolve_calls(cfg, units, routes, http, hosts):
     경로가 그대로는 어느 서버와도 맞지 않는 호출은, 같은 접두어를 떼거나 붙였을 때 맞는 호출이 여럿이면 그 접두어로 맞춘다(접두어 추정).
     돌려주는 diag 는 시스템별 집계와 추정한 접두어다(연결 진단)."""
     L = cfg.get('link', {})
-    ext_cfg = cfg.get('external', [])
+    iv = infra_view(cfg)
+    # 뒤가 비어 있는 웹서버·WAS 는 레거시처럼 호출이 거기서 끝난다
+    ext_cfg = cfg.get('external', []) + [dict(id=nid, name=iv['nodes'][nid].get('name', nid), hosts=iv['nodes'][nid].get('hosts', [])) for nid in sorted(iv['ends'])]
+    ext_by = {x['id']: x for x in ext_cfg}
     src_of = {s['id']: s['source'] for s in cfg['systems']}
-    owners = [(s['id'], s.get('hosts', [])) for s in cfg['systems'] if s.get('hosts')]
+    # 주소의 주인: 서버 자신의 주소면 그 서버 하나, 웹서버·WAS 의 주소면 그 뒤에 있는 것들
+    owners = [(frozenset([s['id']]), s.get('hosts', []), s['id']) for s in cfg['systems'] if s.get('hosts')]
+    owners += [(frozenset(iv['reach'][nid]), n.get('hosts', []), nid) for nid, n in iv['nodes'].items() if n.get('hosts') and nid not in iv['ends']]
     by_sys = {}
     for r in routes:
         by_sys.setdefault(units[r['unit']]['sys'], []).append(r)
-    for s in cfg['systems']:                 # 게이트웨이가 경로 앞에 붙이는 접두어: 붙은 꼴로도 맞춰 본다
+    for s in cfg['systems']:                 # 게이트웨이·WAS 가 경로 앞에 붙이는 접두어: 붙은 꼴로도 맞춰 본다 (서버 구성에 적은 경로 포함)
         base = by_sys.get(s['id'], [])
-        extra = [dict(r, segs=norm_path(pre) + r['segs'], pfx=1) for pre in s.get('prefix', []) for r in base]
+        pres = list(dict.fromkeys(s.get('prefix', []) + iv['prefix'].get(s['id'], [])))
+        extra = [dict(r, segs=norm_path(pre) + r['segs'], pfx=1) for pre in pres for r in base]
         if extra:
             by_sys[s['id']] = base + extra
-    owner_of = lambda h: next((sid for sid, pats in owners if host_match(h, pats)), None)
+    owner_of = lambda h: next((ids for ids, pats, _ in owners if host_match(h, pats)), None)
+    owner_id = lambda h: next((oid for _, pats, oid in owners if host_match(h, pats)), None)
 
     file_hosts = {}                # (시스템, 파일) → 그 파일에 적힌 주소들. 클라이언트 클래스가 기준 주소를 필드로 들고 경로만 붙여 쓰는 꼴을 위해
     for u, h in hosts:
@@ -388,12 +454,18 @@ def resolve_calls(cfg, units, routes, http, hosts):
             continue
         per = {}
         for sid, rs in by_sys.items():
-            if (owner and sid != owner) or sid in L.get('never', {}).get(cs, []):
+            if (owner and sid not in owner) or sid in L.get('never', {}).get(cs, []):
                 continue
             r = match_route(rs, method, segs)
             if r and r['unit'] != u:
                 per[sid] = r
         if not per:
+            behind = [ext_by[t] for t in sorted(owner or ()) if t in ext_by]      # 웹서버 뒤에 소스 없는 것이 하나 있고, 지도 안 서버에는 맞는 API 가 없다: 그리로 간다
+            if len(behind) == 1:
+                external.setdefault(behind[0]['id'], []).append((u, mi, method, segs, rule))
+                how_n['external'] = how_n.get('external', 0) + 1
+                tally(cs, 'external')
+                continue
             if not host and not rule.startswith('client-'):      # 경로만 쓴 호출인데 지도 안에 맞는 서버가 없다: 같은 파일에 적힌 주소가 등록한 레거시 하나의 것이면 그리로 간다
                 fh = [h for h in file_hosts.get((cs, units[u]['file']), ()) if not _NOISE_HOST.match(h) and not owner_of(h)]
                 xs = [x for x in ext_cfg if any(host_match(h, x.get('hosts', [])) for h in fh)]
@@ -411,12 +483,11 @@ def resolve_calls(cfg, units, routes, http, hosts):
     mentioned, seen_hosts = {}, {}
     for u, h in hosts:
         h = norm_host(h)
-        sid = owner_of(h) or learned.get(h)
-        if sid:
+        for sid in owner_of(h) or ([learned[h]] if h in learned else []):
             mentioned.setdefault(units[u]['sys'], set()).add(sid)
         ext = next((x['id'] for x in ext_cfg if host_match(h, x.get('hosts', []))), None)
         if not _NOISE_HOST.match(h):
-            e = seen_hosts.setdefault(h, dict(host=h, systems=[], owner=owner_of(h) or ext or ''))
+            e = seen_hosts.setdefault(h, dict(host=h, systems=[], owner=owner_id(h) or ext or ''))
             if units[u]['sys'] not in e['systems']:
                 e['systems'].append(units[u]['sys'])
     aff = {}
@@ -471,7 +542,7 @@ def resolve_calls(cfg, units, routes, http, hosts):
         if not segs or (loose(rule, segs) and len(segs) < 2):
             continue
         for sid, r in last_any + ([] if segs[-1].startswith(':') else last_lit.get(segs[-1], [])):
-            if sid == cs or (owner and sid != owner) or sid in L.get('never', {}).get(cs, []) or r['unit'] == u:
+            if sid == cs or (owner and sid not in owner) or sid in L.get('never', {}).get(cs, []) or r['unit'] == u:
                 continue
             rsegs, n, m = r['segs'], len(segs), len(r['segs'])
             same = lambda a, b: any(x == y and not x.startswith(':') for x, y in zip(a, b))      # 글자 그대로 같은 조각이 하나는 있어야 한다. /c/{slug} 같은 라우트는 무엇이든 받아 주므로 근거가 못 된다
@@ -730,9 +801,11 @@ def link(cfg, results, sources, rules):
                 svc_edges[(i, ui)] = n
     # 소스 없는 시스템(레거시 등): 시스템마다 유닛 하나. 우리 코드가 부르는 API 가 멤버가 되고, 부르는 쪽에서 선이 온다
     ext_edges = {}
-    for x in ext_cfg:
-        ui, members, seen = len(units), [], {}
-        for u, mi, method, segs, rule in api['external'].get(x['id'], []):
+
+    def received(xid, ui, members):
+        """소스 없는 쪽으로 간 호출을 그 유닛의 멤버로 만들고, 부르는 쪽에서 오는 선을 모은다."""
+        seen = {}
+        for u, mi, method, segs, rule in api['external'].get(xid, []):
             shown = f"{method} /" + '/'.join('{' + g[1:] + '}' if g.startswith(':') else g for g in segs)
             key = (method, tuple(':' if g.startswith(':') else g for g in segs))
             if key not in seen:
@@ -749,10 +822,31 @@ def link(cfg, results, sources, rules):
                 lst = units[u]['m'][mi].setdefault('h', [])
                 if [ui, seen[key], label] not in lst:
                     lst.append([ui, seen[key], label])
+    for x in ext_cfg:
+        ui, members = len(units), []
+        received(x['id'], ui, members)
         rec = dict(rt='unit', i=ui, id=f"{x['id']}:api", sys=x['id'], mod='외부 API', name=x.get('name', x['id']), kind='service', decl='external', file='', line=0, loc=0,
                    doc=x.get('desc') or '소스가 없는 시스템. 우리 코드가 이쪽으로 보내는 요청만 보인다.', src='')
         if members:
             rec['m'] = members[:120]
+        units.append(rec)
+    # 서버 구성(웹서버·WAS·게이트웨이): 항목마다 유닛 하나. 멤버는 인스턴스(환경·주소)이고, 뒤가 비어 있는 항목은 레거시처럼 받은 호출도 멤버로 든다.
+    # 코드가 아니라 사람이 적은 정보다. 요청이 서버 코드에 닿기 전에 거치는 곳을 지도에 올려, 앱과 서버 사이가 어떻게 이어지는지 보이게 한다.
+    iv = infra_view(cfg)
+    known = {s['id']: s['name'] for s in cfg['systems']}
+    known.update({x['id']: x.get('name', x['id']) for x in ext_cfg})
+    known.update({nid: n.get('name', nid) for nid, n in iv['nodes'].items()})
+    for nid, n in iv['nodes'].items():
+        ui, members, info = len(units), [], n.get('host_info', {})
+        for h in n.get('hosts', []):
+            hi = info.get(h, {})
+            members.append(dict(n=h, s=' · '.join(v for v in (hi.get('env'), h, hi.get('note')) if v), l=0, e=0, k='inst'))
+        if nid in iv['ends']:
+            received(nid, ui, members)
+        rec = dict(rt='unit', i=ui, id=f"{nid}:node", sys=nid, mod='서버 구성', name=n.get('name', nid), kind='service', decl='infra', file='', line=0, loc=0, doc=n.get('note', ''), src='',
+                   infra=dict(kind=n.get('kind', 'web'), product=n.get('product', ''), path=n.get('path', []), to=[t for t in n.get('to', []) if t in known and t != nid]))
+        if members:
+            rec['m'] = members[:160]
         units.append(rec)
     # 플랫폼 간 대응 구현: 주석이 다른 묶음의 이름을 가리키거나, 지정한 시스템 쌍에서 타입 이름이 같을 때
     MS = set(L.get('mirror_systems') or [s['id'] for s in cfg['systems'] if s['lang'] not in ('prisma',)])
@@ -800,9 +894,28 @@ def link(cfg, results, sources, rules):
     for (s, t), how in mirror.items():
         edges.append(dict(s=s, t=t, k='mirror', w=1, how=how))
 
+    # 요청이 어느 길(웹서버 → WAS → …)로 들어가는가. 부르는 시스템의 코드에 그 길 위 항목의 주소가 적혀 있으면 그 길이고,
+    # 적힌 것이 없으면 그 서버로 들어가는 길이 하나뿐일 때만 그 길로 본다. 서버 자신의 주소를 적어 둔 시스템은 거치지 않고 바로 부르는 것으로 본다.
+    said = {}
+    for u, h in hosts:
+        said.setdefault(units[u]['sys'], set()).add(norm_host(h))
+    own_hosts = {s['id']: s.get('hosts', []) for s in cfg['systems']}
+    via = []
+    for cs, ts in sorted({(units[a]['sys'], units[b]['sys']) for a, b in list(agg) + list(ext_edges)}):
+        ways = iv['paths'].get(ts, [])
+        if cs == ts or not ways or any(host_match(h, own_hosts.get(ts, [])) for h in said.get(cs, ())):
+            continue
+        named = [w for w in ways if any(host_match(h, iv['nodes'][w[0]].get('hosts', [])) for h in said.get(cs, ()))]
+        whole = [c[:-1] for c in iv['chains'] if c[-1] == ts]
+        pick = max(named, key=len) if named else whole[0] if len(whole) == 1 else None
+        if pick:
+            via.append([cs, ts, pick])
+
     used = set(u['sys'] for u in units)
+    sub_of = lambda n: ' · '.join(v for v in (INFRA_KINDS.get(n.get('kind'), '서버 구성'), n.get('product'), f"주소 {len(n['hosts'])}" if n.get('hosts') else '') if v)
     systems = ([dict(id=s['id'], name=s['name'], sub=s.get('sub', ''), source=s['source']) for s in cfg['systems']]
-               + [dict(id=x['id'], name=x.get('name', x['id']), sub=x.get('sub') or '소스 없음 · 보내는 요청만 표시', source='', ext=True) for x in ext_cfg] + [p for p in PSEUDO])
+               + [dict(id=x['id'], name=x.get('name', x['id']), sub=x.get('sub') or '소스 없음 · 보내는 요청만 표시', source='', ext=True) for x in ext_cfg]
+               + [dict(id=nid, name=n.get('name', nid), sub=sub_of(n), source='', infra=n.get('kind', 'web')) for nid, n in iv['nodes'].items()] + [p for p in PSEUDO])
     sys_name = {s['id']: s['name'] for s in systems}
     pending = [dict(u=u, m=mi, call=f"{method} /" + '/'.join('{' + g[1:] + '}' if g.startswith(':') else g for g in norm_path(path)),
                     cands=[[sid, r['unit'], r['member'], f"{r['method']} {r['path']}"] for sid, r in per.items()]) for u, mi, method, path, rule, per in api['pending']]
@@ -815,6 +928,10 @@ def link(cfg, results, sources, rules):
         meta['offmap'] = api['offmap'][:60]      # 지도에 없는 주소로 가는 호출. 레거시로 등록할 후보
     if api['hosts_seen']:
         meta['hosts_seen'] = api['hosts_seen'][:120]
+    if iv['chains']:
+        meta['chains'] = iv['chains']            # 서버 구성: 맨 앞 항목에서 서버까지의 길 [웹서버, WAS, …, 서버]
+    if via:
+        meta['via'] = via                        # [부르는 시스템, 불리는 시스템, 거치는 항목들]
     open_routes = [r for r in routes if not any(e['k'] == 'http' and e['t'] == r['unit'] and f"{r['method']} {r['path']}" in e['routes'] for e in edges)]
     summary = dict(units=len(units), members=sum(len(u.get('m', [])) for u in units), edges=len(edges),
                    by_kind={k: sum(1 for e in edges if e['k'] == k) for k in sorted(set(e['k'] for e in edges))},
@@ -823,6 +940,7 @@ def link(cfg, results, sources, rules):
                    unread=unread_patterns(cfg, unread, api['diag'], routes), auto=adopted,
                    findings=[dict(kind=k, id=sid, text=t) for k, sid, t in diag_findings(dict(diag=api['diag']), {s['id']: s['name'] for s in cfg['systems']})],
                    external={x['id']: dict(calls=len(api['external'].get(x['id'], [])), name=x.get('name', x['id'])) for x in ext_cfg},
+                   infra={nid: dict(name=n.get('name', nid), calls=len(api['external'].get(nid, [])), end=nid in iv['ends']) for nid, n in iv['nodes'].items()},
                    unmatched_db=sum(1 for x in dbacc if not any(k[1] == norm_table(x[3]) for k in table_idx)))
     return [meta] + units + [dict(rt='edge', **e) for e in edges], summary
 
@@ -1234,7 +1352,7 @@ def cmd_diagnose(cfg, args):
 
 def adopt_systems(cfg, name, systems):
     """새 소스에서 찾은 시스템에 소스 이름을 적고, 이미 있는 시스템과 id 가 겹치면 소스 이름을 앞에 붙인다."""
-    taken = {s['id'] for s in cfg['systems']} | {x['id'] for x in cfg.get('external', [])}
+    taken = {s['id'] for s in cfg['systems']} | {x['id'] for x in cfg.get('external', [])} | {n['id'] for n in cfg.get('infra', [])}
     for s in systems:
         s['source'] = name
         s.setdefault('ns', s['id'])
@@ -1526,7 +1644,7 @@ def cmd_ingest(cfg, args):
 def make_server(cfg, port=0):
     """작업 공간의 지도를 보여 줄 로컬 서버. 이 컴퓨터(127.0.0.1)에서만 열리고, 데이터 파일은 작업 공간에서 바로 읽어 sync 결과가 곧장 보인다.
 
-    /api/… 는 화면의 설정 패널이 쓰는 주소다(폴더 추가, 레거시 등록, 부르는 서버 지정, 배치 저장, 다시 분석).
+    /api/… 는 화면의 설정 패널이 쓰는 주소다(폴더 추가, 레거시 등록, 서버 구성, 주소 묶기, 부르는 서버 지정, 배치 저장, 다시 분석, AI 연결).
     다른 웹 페이지가 이 주소를 몰래 부르지 못하게, 서버를 띄울 때 만든 토큰을 요청마다 확인하고 Host 가 이 컴퓨터인지도 본다.
     토큰은 /api/state 로만 내주는데, 다른 출처의 페이지는 그 응답을 읽을 수 없다."""
     import http.server
@@ -1535,6 +1653,7 @@ def make_server(cfg, port=0):
     site, live, cfg_path = os.path.join(cfg['_dir'], 'site'), os.path.join(cfg['_dir'], cfg.get('out', '.')), cfg['_path']
     token, lock = secrets.token_urlsafe(18), threading.Lock()
     job = dict(running=False, kind='', log=[], rc=None)
+    AI, ai_gate = load_ai(), threading.BoundedSemaphore(3)      # AI 요청은 한꺼번에 셋까지만: 화면이 잘못 돌아도 호출이 쏟아지지 않게
 
     def run_job(kind, argv):
         with lock:
@@ -1564,16 +1683,74 @@ def make_server(cfg, port=0):
         return dict(token=token, name=c.get('name', ''), home=os.path.expanduser('~'),
                     sources=[dict(name=x['name'], path=x.get('path', ''), git=x.get('git', ''), systems=[y['id'] for y in c['systems'] if y['source'] == x['name']]) for x in c['sources']],
                     systems=[dict(id=y['id'], name=y['name'], sub=y.get('sub', ''), lang=y['lang'], source=y['source'], hosts=y.get('hosts', []), prefix=y.get('prefix', []),
-                                  skipped=table.get(y['lang'], '').startswith('문법 없음')) for y in c['systems']],
-                    external=c.get('external', []), link=dict(calls=c['link'].get('calls', {}), never=c['link'].get('never', {}), auto_off=c['link'].get('auto_off', []), ignore_patterns=c['link'].get('ignore_patterns', [])),
+                                  host_info=y.get('host_info', {}), skipped=table.get(y['lang'], '').startswith('문법 없음')) for y in c['systems']],
+                    external=c.get('external', []), infra=c.get('infra', []), infra_kinds=INFRA_KINDS, link=dict(calls=c['link'].get('calls', {}), never=c['link'].get('never', {}), auto_off=c['link'].get('auto_off', []), ignore_patterns=c['link'].get('ignore_patterns', [])),
                     built_at=man.get('built_at', ''), version=man.get('version', ''), summary=man.get('summary', {}), job=dict(job, log=job['log'][-60:]),
                     findings=[dict(kind=k, id=sid, text=t) for k, sid, t in diag_findings(man.get('summary', {}), {y['id']: y['name'] for y in c['systems']})], reads=READS,
-                    custom=[dict(id=r.get('id'), role=r.get('role'), **r.get('made', {})) for r in load_custom(c)['rules']])
+                    custom=[dict(id=r.get('id'), role=r.get('role'), **r.get('made', {})) for r in load_custom(c)['rules']],
+                    ai=AI.public(AI.load(cfg['_dir'])))
 
     def words(v, limit=30):
         """화면에서 온 목록 값: 문자열 목록이나 쉼표로 나눈 문자열을 받아 깨끗한 목록으로."""
         items = v if isinstance(v, list) else re.split(r'[,\n]', str(v or ''))
         return [str(x).strip()[:200] for x in items if str(x).strip()][:limit]
+
+    def host_rows(rows):
+        """화면에서 온 인스턴스 줄들 → (주소 목록, 주소별 환경·메모). 붙여 넣은 http:// 와 뒤쪽 경로는 떼고 소문자로 맞춘다."""
+        hosts, info = [], {}
+        for r in (rows if isinstance(rows, list) else [])[:80]:
+            r = r if isinstance(r, dict) else dict(host=r)
+            h = re.sub(r'^[a-z][a-z0-9+.-]*://', '', str(r.get('host') or '').strip().lower()).split('/')[0].strip()
+            if not h:
+                continue
+            if not re.match(r'[\w.*:\[\]-]{1,200}$', h):
+                raise SystemExit(f'주소로 읽을 수 없습니다: {h[:60]}')
+            if h not in hosts:
+                hosts.append(h)
+            env, note = str(r.get('env') or '').strip()[:20], str(r.get('note') or '').strip()[:120]
+            if env or note:
+                info[h] = {k: v for k, v in (('env', env), ('note', note)) if v}
+        return hosts, info
+
+    def set_hosts(entry, hosts, info=None):
+        """항목의 주소를 바꾼다. info 를 안 주면 남은 주소의 환경·메모는 그대로 둔다."""
+        keep = entry.get('host_info', {}) if info is None else info
+        entry['hosts'], entry['host_info'] = hosts, {h: v for h, v in keep.items() if h in hosts}
+        for key in ('hosts', 'host_info'):
+            if not entry[key]:
+                del entry[key]
+
+    def claim(c, owner, hosts):
+        """주소 하나는 한 곳에만 둔다: owner 가 갖게 된 주소를 다른 시스템·레거시·서버 구성 항목에서 뺀다. 옮긴 개수를 돌려준다."""
+        want, moved = {norm_host(h) for h in hosts}, 0
+        for e in c['systems'] + c.get('external', []) + c.get('infra', []):
+            if e is owner or not e.get('hosts'):
+                continue
+            rest = [h for h in e['hosts'] if norm_host(h) not in want]
+            if len(rest) != len(e['hosts']):
+                moved += len(e['hosts']) - len(rest)
+                set_hosts(e, rest)
+        return moved
+
+    def all_ids(c):
+        return {y['id'] for y in c['systems']} | {x['id'] for x in c.get('external', [])} | {n['id'] for n in c.get('infra', [])} | {'device', 'cloud'}
+
+    def new_id(c, label, fallback):
+        base = re.sub(r'[^a-z0-9]+', '-', label.lower()).strip('-') or fallback
+        xid, k, taken = base, 2, all_ids(c)
+        while xid in taken:
+            xid, k = f'{base}-{k}', k + 1
+        return xid
+
+    def forget(c, gone, into=None):
+        """없어진 id 를 가리키던 곳을 정리한다. into 를 주면 그 id 로 바꿔 건다(합쳐진 경우)."""
+        swap = lambda ts: list(dict.fromkeys(t if t not in gone else into for t in ts if t not in gone or into))
+        for key in ('calls', 'never'):
+            c['link'][key] = {k: v for k, v in ((k, swap(ts)) for k, ts in c['link'].get(key, {}).items() if k not in gone) if v}
+            if not c['link'][key]:
+                del c['link'][key]
+        for n in c.get('infra', []):
+            n['to'] = [t for t in swap(n.get('to', [])) if t != n['id']]
 
     def api(name, body):
         c = load_config(cfg_path)
@@ -1628,8 +1805,7 @@ def make_server(cfg, port=0):
                 raise SystemExit(f'없는 소스입니다: {sname}')
             c['sources'] = [x for x in c['sources'] if x['name'] != sname]
             c['systems'] = [y for y in c['systems'] if y['source'] != sname]
-            for key in ('calls', 'never'):
-                c['link'][key] = {k: [t for t in v if t not in gone] for k, v in c['link'].get(key, {}).items() if k not in gone}
+            forget(c, gone)
             save_config(c)
             return dict(removed=sorted(gone))
         if name == 'system':                  # 시스템 이름·주소·경로 접두어 고치기
@@ -1638,23 +1814,36 @@ def make_server(cfg, port=0):
                 raise SystemExit('없는 시스템입니다.')
             if str(body.get('name') or '').strip():
                 y['name'] = str(body['name']).strip()[:80]
-            for key in ('hosts', 'prefix'):
-                if key in body:
-                    y[key] = words(body[key])
-                    if not y[key]:
-                        del y[key]
+            moved = 0
+            if 'instances' in body:               # 서버 구성 화면: 주소마다 환경(개발·검증·운영)과 메모를 함께 받는다
+                hosts, info = host_rows(body['instances'])
+                set_hosts(y, hosts, info)
+                moved = claim(c, y, hosts)
+            elif 'hosts' in body:
+                hosts, _ = host_rows(words(body['hosts']))
+                set_hosts(y, hosts)
+                moved = claim(c, y, hosts)
+            if 'prefix' in body:
+                y['prefix'] = words(body['prefix'])
+                if not y['prefix']:
+                    del y['prefix']
             save_config(c)
-            return dict(ok=True)
+            return dict(ok=True, moved=moved)
         if name == 'external':                # 소스 없는 시스템(레거시) 등록·수정·삭제
             ext = c.setdefault('external', [])
             if body.get('remove'):
                 c['external'] = [x for x in ext if x['id'] != body['remove']]
-                for key in ('calls', 'never'):
-                    c['link'][key] = {k: [t for t in v if t != body['remove']] for k, v in c['link'].get(key, {}).items()}
+                forget(c, {body['remove']})
                 save_config(c)
                 return dict(ok=True)
             label = str(body.get('name') or '').strip()[:80]
-            hosts, paths, clients = words(body.get('hosts')), words(body.get('paths')), str(body.get('clients') or '').strip()[:200]
+            x = next((x for x in ext if x['id'] == body.get('id')), None)
+            hosts, info = host_rows(body['instances']) if 'instances' in body else host_rows(words(body.get('hosts')))
+            if 'instances' not in body:
+                info = None
+            if x and 'paths' not in body and 'clients' not in body:      # 서버 구성 화면에서 이름·주소만 고칠 때: 경로 꼴과 클라이언트 이름은 그대로 둔다
+                body = dict(body, paths=x.get('paths', []), clients=x.get('clients', ''))
+            paths, clients = words(body.get('paths')), str(body.get('clients') or '').strip()[:200]
             if not label:
                 raise SystemExit('이름을 적어 주세요.')
             if not (hosts or paths or clients):
@@ -1664,20 +1853,72 @@ def make_server(cfg, port=0):
                     re.compile(clients)
                 except re.error as e:
                     raise SystemExit(f'클라이언트 이름 꼴이 정규식으로 읽히지 않습니다: {e}')
-            x = next((x for x in ext if x['id'] == body.get('id')), None)
             if not x:
-                base = re.sub(r'[^a-z0-9]+', '-', label.lower()).strip('-') or 'legacy'
-                xid, k, taken = base, 2, {y['id'] for y in c['systems']} | {x['id'] for x in ext} | {'device', 'cloud'}
-                while xid in taken:
-                    xid, k = f'{base}-{k}', k + 1
-                x = dict(id=xid)
+                x = dict(id=new_id(c, label, 'legacy'))
                 ext.append(x)
-            x.update(name=label, hosts=hosts, paths=paths, clients=clients)
-            for key in ('hosts', 'paths', 'clients'):
+            x.update(name=label, paths=paths, clients=clients)
+            set_hosts(x, hosts, info)
+            moved = claim(c, x, hosts)
+            for key in ('paths', 'clients'):
                 if not x[key]:
                     del x[key]
             save_config(c)
-            return dict(id=x['id'])
+            return dict(id=x['id'], moved=moved)
+        if name == 'infra':                   # 서버 구성: 웹서버·WAS·게이트웨이 등록·수정·삭제. 코드가 아니라 사람이 아는 것을 적는다
+            nodes = c.setdefault('infra', [])
+            if body.get('remove'):
+                c['infra'] = [n for n in nodes if n['id'] != body['remove']]
+                forget(c, {body['remove']})
+                save_config(c)
+                return dict(ok=True)
+            kind, label = body.get('kind'), str(body.get('name') or '').strip()[:80]
+            if kind not in INFRA_KINDS:
+                raise SystemExit('종류(웹서버, WAS, 게이트웨이)를 골라 주세요.')
+            if not label:
+                raise SystemExit('이름을 적어 주세요.')
+            n = next((n for n in nodes if n['id'] == body.get('id')), None)
+            if not n:
+                n = dict(id=new_id(c, label, kind))
+                nodes.append(n)
+            hosts, info = host_rows(body.get('instances'))
+            to = [t for t in dict.fromkeys(words(body.get('to'), 60)) if t in all_ids(c) - {n['id'], 'device', 'cloud'}]
+            paths = ['/' + '/'.join(norm_path(p)) for p in words(body.get('path'), 6) if norm_path(p)]
+            n.update(kind=kind, name=label, product=str(body.get('product') or '').strip()[:60], to=to, path=paths, note=str(body.get('note') or '').strip()[:400])
+            set_hosts(n, hosts, info)
+            by = {m['id']: m.get('to', []) for m in nodes}
+
+            def loops(cur, trail):
+                return cur in trail or any(loops(t, trail | {cur}) for t in by.get(cur, []))
+            if loops(n['id'], frozenset()):
+                raise SystemExit('뒤에 있는 서버를 따라가면 다시 자기에게 돌아옵니다. 순서를 확인해 주세요.')
+            moved = claim(c, n, hosts)
+            for key in ('product', 'to', 'path', 'note'):
+                if not n[key]:
+                    del n[key]
+            save_config(c)
+            return dict(id=n['id'], moved=moved)
+        if name == 'group':                   # 주소(인스턴스) 여러 개를 한 서버로 묶는다. 개발·운영 주소, 여러 대로 나뉜 서버를 지도에서 하나로 보이게 한다
+            hosts, info = host_rows(body.get('instances') or [dict(host=h, env=body.get('env')) for h in words(body.get('hosts'), 80)])
+            if not hosts:
+                raise SystemExit('묶을 주소를 골라 주세요.')
+            entries = c['systems'] + c.get('external', []) + c.get('infra', [])
+            target = next((e for e in entries if e['id'] == body.get('to')), None)
+            if not target:
+                label = str(body.get('name') or '').strip()[:80]
+                if body.get('to') or not label:
+                    raise SystemExit('묶을 서버를 고르거나, 새 서버의 이름을 적어 주세요.')
+                target = dict(id=new_id(c, label, 'legacy'), name=label)
+                c.setdefault('external', []).append(target)
+            had = {x['id'] for x in c.get('external', []) if x is not target and x.get('hosts')}
+            moved = claim(c, target, hosts)
+            set_hosts(target, list(dict.fromkeys(target.get('hosts', []) + hosts)), dict(target.get('host_info', {}), **info))
+            # 주소가 전부 옮겨 가 비게 된 레거시는 합쳐진 것이다: 지우고, 그것을 가리키던 설정은 묶인 서버로 돌린다 (경로 꼴·클라이언트 이름으로 잡는 레거시는 남긴다)
+            merged = {x['id'] for x in c.get('external', []) if x['id'] in had and not x.get('hosts') and not x.get('paths') and not x.get('clients')}
+            if merged:
+                c['external'] = [x for x in c['external'] if x['id'] not in merged]
+                forget(c, merged, target['id'])
+            save_config(c)
+            return dict(id=target['id'], moved=moved, merged=sorted(merged))
         if name == 'link':                    # 애매한 호출을 어느 서버로 볼지(calls), 잇지 않을 서버(never)
             a, b, mode, ids = str(body.get('from') or ''), str(body.get('to') or ''), body.get('mode'), {y['id'] for y in c['systems']} | {x['id'] for x in c.get('external', [])}
             if a not in ids or (mode != 'clear' and b not in ids):
@@ -1727,6 +1968,18 @@ def make_server(cfg, port=0):
                 notes.pop('positions', None)
             write_atomic(npath, json.dumps(notes, ensure_ascii=False, indent=1))
             return dict(saved=len(pos))
+        if name == 'ai-config':               # AI 연결 설정. 키는 받아서 작업 공간의 atlas-ai.json 에만 두고, 화면으로 돌려주지 않는다
+            return dict(ai=AI.public(AI.update(cfg['_dir'], body)))
+        if name in ('ai', 'ai-test'):         # 화면이 만든 글(구조 정보 + 문의)을 정해 둔 곳으로 보내고 답을 돌려준다
+            if not ai_gate.acquire(blocking=False):
+                raise AI.AIError('rate_limited', 'AI 요청이 이미 여러 개 돌고 있습니다. 끝난 뒤 다시 시도해 주세요.', 429)
+            try:
+                if name == 'ai-test':
+                    out = AI.ask(AI.load(cfg['_dir']), '연결 시험입니다. OK 라고만 답하세요.', 'quick')
+                    return dict(ok=True, model=out['model'], reply=out['text'].strip()[:80])
+                return AI.ask(AI.load(cfg['_dir']), body.get('prompt'), body.get('tier'))
+            finally:
+                ai_gate.release()
         if name == 'sync':
             return run_job('sync', ['sync'] + ([] if any(x.get('git') for x in c['sources']) else ['--no-fetch']))
         if name == 'ingest':
@@ -1784,6 +2037,8 @@ def make_server(cfg, port=0):
                 self.reply(200, api(path[5:], body if isinstance(body, dict) else {}))
             except SystemExit as e:
                 self.reply(400, dict(error=str(e)))
+            except AI.AIError as e:
+                self.reply(e.status, dict(error=e.message, code=e.code))
             except Exception as e:
                 self.reply(400, dict(error=f'{type(e).__name__}: {e}'))
 

@@ -499,5 +499,64 @@ export const b = () => fetch('/push/devices');
     atlas(cfg, 'sync')
     check('설정에서 자가 수리를 끄면 받아들이지 않는다', not load(ws)[2] and not json.load(open(os.path.join(ws, 'atlas-manifest.json'), encoding='utf-8'))['summary'].get('auto'))
 
+with tempfile.TemporaryDirectory() as ws, tempfile.TemporaryDirectory() as src:
+    print('11) 서버 구성: 웹서버 · WAS 를 거쳐 들어가는 호출')
+    # 앱은 웹서버의 주소로 부르고, 경로 앞에는 WAS 의 컨텍스트 경로(/shop)가 붙는다. 서버 코드는 주소도 /shop 도 모른다
+    web(src, 'front-web', """
+export const a = (id: number) => fetch(`https://m.front.example/shop/api/orders/${id}`);
+export const b = () => fetch('https://m.front.example/shop/api/orders', { method: 'POST' });
+export const c = (id: number) => fetch(`https://m.front.example/shop/api/orders/${id}/cancel`, { method: 'POST' });
+export const logo = () => fetch('https://static.front.example/assets/logo');
+""")
+    # 같은 웹서버의 개발 주소로 부르는 앱
+    web(src, 'stage-web', """
+export const a = (id: number) => fetch(`https://dev-m.front.example:8443/shop/api/orders/${id}`);
+""")
+    # 서버 둘 앞에 있는 게이트웨이로 부르는 앱
+    web(src, 'gate-web', """
+export const drop = (id: number) => fetch(`https://gw.corp.example/api/bookings/${id}`, { method: 'DELETE' });
+""")
+    cfg = os.path.join(ws, 'atlas.config.json')
+    atlas(cfg, 'init', 'link-check-infra')
+    atlas(cfg, 'add', os.path.join(REPO, 'fixtures', 'shop', 'order-service'))
+    atlas(cfg, 'add', os.path.join(REPO, 'fixtures', 'booking', 'booking-server'))
+    for name in ('front-web', 'stage-web', 'gate-web'):
+        atlas(cfg, 'add', os.path.join(src, name))
+    edit(cfg, lambda d: d.update(infra=[
+        dict(id='web-front', kind='web', name='앞단 웹서버', product='Nginx', hosts=['m.front.example', 'dev-m.front.example:8443'],
+             host_info={'m.front.example': {'env': '운영'}, 'dev-m.front.example:8443': {'env': '개발', 'note': '사내망'}}, to=['was-front']),
+        dict(id='was-front', kind='was', name='주문 WAS', product='Tomcat', hosts=['10.20.0.5:8080'], path=['/shop'], to=['order-service']),
+        dict(id='static-web', kind='web', name='정적 파일 서버', hosts=['static.front.example']),
+        dict(id='gate', kind='gw', name='사내 게이트웨이', hosts=['gw.corp.example'], to=['order-service', 'booking-server', 'no-such-system'])]))
+    out = atlas(cfg, 'sync')
+    meta, units, http = load(ws)
+    sysd = {s['id']: s for s in meta['systems']}
+    check('웹서버 주소로 부른 호출이 그 뒤의 서버에 붙는다 (WAS 의 경로 /shop 을 떼고)', len(http.get(('front-web', 'order-service'), [])) == 3 and ('front-web', 'booking-server') not in http, sorted(http))
+    check('같은 웹서버의 개발 주소로 부른 호출도 같은 서버에 붙는다', 'GET /api/orders/{id}' in http.get(('stage-web', 'order-service'), []) and ('stage-web', 'booking-server') not in http, sorted(http))
+    check('서버 둘 앞의 게이트웨이: 그 둘 가운데 경로가 맞는 서버에 붙는다', http.get(('gate-web', 'booking-server')) == ['DELETE /api/bookings/{booking_id}'], http.get(('gate-web', 'booking-server')))
+    check('웹서버 · WAS 가 지도에 시스템으로 올라온다', sysd.get('web-front', {}).get('infra') == 'web' and sysd.get('was-front', {}).get('infra') == 'was' and sysd['web-front']['sub'] == '웹서버 · Nginx · 주소 2', sysd.get('web-front'))
+    node = {u['sys']: u for u in units if u.get('decl') == 'infra'}
+    check('인스턴스(환경 · 주소)가 멤버로 든다', [m['s'] for m in node['web-front'].get('m', [])] == ['운영 · m.front.example', '개발 · dev-m.front.example:8443 · 사내망'] and all(m.get('k') == 'inst' for m in node['web-front']['m']), node['web-front'].get('m'))
+    check('없는 시스템을 가리키는 설정은 버린다', node['gate']['infra']['to'] == ['order-service', 'booking-server'], node['gate']['infra'])
+    check('들어가는 길이 기록된다', ['web-front', 'was-front', 'order-service'] in meta.get('chains', []) and ['gate', 'booking-server'] in meta['chains'], meta.get('chains'))
+    via = {(a, b): w for a, b, w in meta.get('via', [])}
+    check('어느 앱이 어느 길로 들어가는지 기록된다', via.get(('front-web', 'order-service')) == ['web-front', 'was-front'] and via.get(('gate-web', 'booking-server')) == ['gate'], meta.get('via'))
+    check('뒤가 비어 있는 웹서버는 레거시처럼 받은 요청을 보여 준다', ('front-web', 'static-web') in http and any(m.get('route') == 'GET /assets/logo' for m in node['static-web'].get('m', [])), (sorted(http), node['static-web'].get('m')))
+    seen = {h['host']: h['owner'] for h in meta.get('hosts_seen', [])}
+    check('등록한 주소는 지도에 없는 주소로 남지 않는다', not any('front.example' in o['host'] or 'corp.example' in o['host'] for o in meta.get('offmap', []))
+          and seen.get('m.front.example') == 'web-front' and seen.get('gw.corp.example') == 'gate' and seen.get('static.front.example') == 'static-web', (meta.get('offmap'), seen))
+    summ = json.load(open(os.path.join(ws, 'atlas-manifest.json'), encoding='utf-8'))['summary']
+    check('요약에 서버 구성이 나온다', summ.get('infra', {}).get('static-web', {}).get('calls') == 1 and summ['infra']['static-web']['end'] and not summ['infra']['web-front']['end'], summ.get('infra'))
+    # 서버 자신의 주소를 적어 둔 시스템은 웹서버를 거치지 않고 바로 부르는 것으로 본다
+    web(src, 'batch-web', """
+export const a = (id: number) => fetch(`http://10.20.0.9:9000/api/orders/${id}`);
+""")
+    atlas(cfg, 'add', os.path.join(src, 'batch-web'))
+    edit(cfg, lambda d: [y for y in d['systems'] if y['id'] == 'order-service'][0].update(hosts=['10.20.0.9:9000']))
+    atlas(cfg, 'sync')
+    meta, units, http = load(ws)
+    via = {(a, b): w for a, b, w in meta.get('via', [])}
+    check('서버 주소로 바로 부르는 시스템은 길을 거치지 않는 것으로 본다', 'GET /api/orders/{id}' in http.get(('batch-web', 'order-service'), []) and ('batch-web', 'order-service') not in via and ('front-web', 'order-service') in via, (sorted(http), meta.get('via')))
+
 print('실패 %d건: %s' % (len(fails), ', '.join(fails)) if fails else '통과')
 sys.exit(1 if fails else 0)

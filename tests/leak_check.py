@@ -18,6 +18,13 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 COMMON_FILES = {'index', 'main', 'route', 'page', 'layout', 'schema', 'app', 'settings', 'config', 'utils', 'types', 'models', 'routes', 'service', 'api', 'db', 'consumer'}
+plain = lambda s: re.sub(r'[^a-z0-9]', '', s.lower())
+OWN = {plain(os.path.basename(ROOT)), 'codeatlas'}       # 이 저장소 자신의 이름. 문서에 나올 수밖에 없으니 반출로 보지 않는다
+
+
+def in_repo(path):
+    p = os.path.abspath(os.path.expanduser(path))
+    return p == ROOT or p.startswith(ROOT + os.sep)
 
 
 def compound(name):
@@ -34,10 +41,10 @@ def collect(workspace):
     if os.path.exists(cfg_path):
         cfg = json.load(open(cfg_path, encoding='utf-8'))
         srcs = cfg.get('sources', [])
-        if srcs and all(s.get('path') and os.path.abspath(os.path.expanduser(s['path'])).startswith(ROOT + os.sep) for s in srcs):
-            return None, None                              # 이 저장소 안의 시험용 소스(fixtures)를 분석한 작업 공간은 기준이 아니다
+        if srcs and all(s.get('path') and in_repo(s['path']) for s in srcs):
+            return None, None                              # 이 저장소 안의 시험용 소스(fixtures)나 이 저장소 자신을 분석한 작업 공간은 기준이 아니다
         for v in [cfg.get('name')] + [s.get('name') for s in cfg.get('sources', [])]:
-            if v and len(v) >= 4:
+            if v and len(v) >= 4 and plain(v) not in OWN:
                 strong[v] = '제품·소스 이름'
         for h in cfg.get('api_hosts', []):
             strong[h] = 'API 호스트'
@@ -83,7 +90,7 @@ def main():
     used = []
     for w in spaces:
         s, k = collect(w)
-        if s is None:
+        if s is None or not (s or k):                      # 기준이 아니거나, 아직 아무것도 넣지 않은 빈 작업 공간
             continue
         used.append(os.path.basename(w.rstrip('/')))
         strong.update(s)

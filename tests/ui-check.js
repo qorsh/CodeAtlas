@@ -6,6 +6,7 @@
    시험용 프로젝트 셋(shop · booking · backoffice)을 임시 작업 공간에 넣고 다음을 본다.
      · 시스템 목록에서 눌러 이동 · 배치 편집으로 시스템을 끌어 옮기고 저장 · 확인이 필요한 호출 목록
      · 설정 패널에서 레거시 등록, 부르는 서버 지정, 다시 분석, 폴더 추가
+     · 서버 구성: 웹서버를 적어 넣고 주소를 한 서버로 묶기 · AI 연결(이 컴퓨터에 띄운 모의 엔드포인트로)과 TRACE 추적
    가짜 DOM 시험(viewer-smoke.js)이 못 보는 것(실제 클릭, 서버와 주고받기, 다시 그리기)을 여기서 확인한다.
    tree-sitter 가 없는 환경에서는 Go 서버를 건너뛰므로, 시스템·유닛 수는 그 경우에도 맞는 값으로 본다.
    분석에 쓸 파이썬은 ATLAS_PYTHON 으로 바꿀 수 있다. */
@@ -22,7 +23,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const kids = [], out = [];
 const ok = (name, cond, info='') => { out.push(`  ${cond ? '통과' : '실패'}  ${name}${info !== '' && !cond ? '  ← ' + info : ''}`); };
 const done = code => { for (const k of kids){ try { k.kill('SIGKILL'); } catch (e){} } try { fs.rmSync(tmp, {recursive:true, force:true}); } catch (e){} process.exit(code); };
-setTimeout(() => { console.log(out.join('\n')); console.log('시간 초과'); done(2); }, 150000);
+setTimeout(() => { console.log(out.join('\n')); console.log('시간 초과'); done(2); }, 280000);
 
 (async () => {
   atlas('init', 'ui-check');
@@ -182,6 +183,85 @@ setTimeout(() => { console.log(out.join('\n')); console.log('시간 초과'); do
   await tap('#cfg-status [data-c="sync"]');
   ok('다시 분석하면 그 꼴이 API 로 읽힌다', await ready(`!!__T.SYS['push-api'] && __T.SYS['push-api'].routes === 3`, 40000), await ev(`JSON.stringify(__T.SYS['push-api'] ? __T.SYS['push-api'].routes : null)`));
   ok('읽지 못한 꼴 알림이 사라진다', !(await text('#pendbox')).includes('읽지 못한 꼴'), await text('#pendbox'));
+
+  // 7c) 서버 구성: 웹서버를 적어 넣고, 주소(인스턴스)를 한 서버로 묶는다
+  const before9 = await spots();
+  await tap('#level .lvnav'); await sleep(300);
+  ok('설정 메뉴에 웹서버 · WAS 추가와 주소 묶기가 있다', (t => ['웹서버 추가', 'WAS 추가', '서버 주소 묶기', 'AI 연결 설정'].every(w => t.includes(w)))(await text('#trace')), (await text('#trace')).slice(0, 300));
+  await tap('#trace [data-act="cfg-web"]'); await sleep(600);
+  ok('웹서버 추가를 누르면 입력 칸이 열리고 이름 칸에 커서가 간다', await ev(`!document.querySelector('#cfg').hidden && document.activeElement && document.activeElement.id === 'n-name' && document.querySelector('#n-kind').value === 'web'`), (await text('#cfg')).slice(0, 200));
+  await ev(`(() => { const set = (sel, v) => { document.querySelector(sel).value = v; }; set('#n-name', '예약 웹서버'); set('#n-product', 'Nginx'); set('#n-rows .irow [data-f=host]', 'https://api.booking.example/v1'); set('#n-rows .irow [data-f=env]', '운영'); })()`);
+  await tap('#cfg [data-c="n-row"]'); await sleep(300);
+  ok('줄을 추가해도 적던 내용이 남는다', await ev(`document.querySelector('#n-name').value === '예약 웹서버' && document.querySelectorAll('#n-rows .irow').length === 2 && document.querySelector('#n-rows .irow [data-f=host]').value.includes('api.booking.example')`));
+  await ev(`(() => { const r = document.querySelectorAll('#n-rows .irow')[1]; r.querySelector('[data-f=host]').value = '10.9.0.5:8443'; r.querySelector('[data-f=env]').value = '개발'; r.querySelector('[data-f=note]').value = '사내망'; })()`);
+  await tap('#cfg input[data-to="booking-server"]'); await sleep(150);
+  await snap('9a-webserver-form');
+  await tap('#cfg [data-c="n-save"]'); await sleep(700);
+  const c9 = await text('#cfg'), webId = await ev(`(__T.API.st.infra[0] || {}).id || ''`);
+  ok('웹서버가 등록되고 다시 분석하라고 알린다', c9.includes('예약 웹서버 을(를) 저장했습니다') && c9.includes('다시 분석해야') && c9.includes('뒤: booking-server') && c9.includes('운영 api.booking.example'), c9.slice(0, 400));
+  ok('설정 파일에 서버 구성이 적힌다', (() => { const n = (JSON.parse(fs.readFileSync(cfg, 'utf8')).infra || [])[0] || {}; return n.kind === 'web' && n.product === 'Nginx' && String(n.hosts) === 'api.booking.example,10.9.0.5:8443' && String(n.to) === 'booking-server' && n.host_info['10.9.0.5:8443'].note === '사내망'; })(), fs.readFileSync(cfg, 'utf8').slice(-500));
+  ok('주소 묶기에 코드에서 본 주소가 주인과 함께 나온다', c9.includes('payment-service:8000') && c9.includes('어느 서버인지 정하지 않음') && c9.includes('지금: 예약 웹서버'), c9.slice(-900));
+  await tap('#cfg input[data-pick="payment-service"]'); await tap('#cfg input[data-pick="payment-service:8000"]');
+  await ev(`(() => { document.querySelector('#g-to').value = 'payment-service'; document.querySelector('select[data-env="payment-service:8000"]').value = '개발'; })()`);
+  await snap('9b-group-hosts');
+  await tap('#cfg [data-c="grp"]'); await sleep(700);
+  ok('고른 주소가 한 서버로 묶인다', (await text('#cfg')).includes('주소 2개를 한 서버로 묶었습니다') && (() => { const y = JSON.parse(fs.readFileSync(cfg, 'utf8')).systems.find(y => y.id === 'payment-service'); return String(y.hosts) === 'payment-service,payment-service:8000' && y.host_info['payment-service:8000'].env === '개발'; })(), (await text('#cfg')).slice(0, 300));
+  await tap('#cfg-status [data-c="sync"]');
+  ok('다시 분석하면 웹서버가 지도에 오른다', await ready(`!!__T.SYS[${JSON.stringify(webId)}] && __T.SYS[${JSON.stringify(webId)}].w > 0`, 40000) && await ev(`__T.SYS[${JSON.stringify(webId)}].infra === 'web'`), webId);
+  ok('웹서버 주소로 부르는 앱의 호출이 웹서버를 거쳐 서버로 이어진다', await ev(`(__T.META.chains || []).some(c => c.join('>') === ${JSON.stringify(webId + '>booking-server')}) && __T.EDGES.some(e => e.via && e.via[0] === ${JSON.stringify(webId)} && __T.UNITS[e.t].sys === 'booking-server')`), await ev(`JSON.stringify([__T.META.chains, __T.META.via])`));
+  ok('웹서버가 생겨도 기존 시스템 자리는 그대로이고 겹치지 않는다', same(before9, await spots()).length === 0 && (await apart()).length === 0, same(before9, await spots()).join(', ') + ' / ' + (await apart()).join(', '));
+  await tap('#level [data-lv="0"]'); await sleep(1400);
+  await snap('9c-map-with-webserver');
+  await ev(`location.hash = ${JSON.stringify('#' + webId + '-node')}`); await sleep(900);
+  const i9 = await text('#insp');
+  ok('웹서버를 고르면 적어 둔 정보와 앞뒤가 보인다', i9.includes('서버 구성') && i9.includes('Nginx') && i9.includes('운영 · api.booking.example') && i9.includes('개발 · 10.9.0.5:8443 · 사내망') && i9.includes('booking-web') && i9.includes('뒷단'), i9.slice(0, 500));
+  await snap('9d-webserver-inspector');
+  await ev(`(() => { const e = __T.EDGES.find(e => e.via); location.hash = ''; document.querySelector('#insp [data-act="close-insp"]').click(); return e.i; })()`);
+
+  // 7d) AI 연결: 이 컴퓨터에 띄운 모의 엔드포인트(OpenAI 호환)로 붙여, TRACE 가 경로를 추적하는지 본다. 실제 AI 서비스로는 아무것도 보내지 않는다
+  const prompts = [], heads = [];
+  const mock = require('http').createServer((rq, rs) => { let b = ''; rq.on('data', d => { b += d; }); rq.on('end', () => {
+    const body = JSON.parse(b || '{}'), prompt = ((body.messages || [])[0] || {}).content || ''; prompts.push(prompt); heads.push(rq.headers.authorization || '');
+    const nums = re => [...new Set([...prompt.matchAll(re)].map(m => +m[1]))];
+    const reply = prompt.includes('연결 시험') ? 'OK'
+      : prompt.includes('모듈(폴더·패키지) 목록') ? JSON.stringify({modules:nums(/^(\d+)\|/gm).slice(0, 60)})
+      : prompt.includes('코드 유닛 목록') ? '후보입니다.\n```json\n' + JSON.stringify({type:'q', units:nums(/^(\d+)\|/gm).slice(0, 14), keywords:['booking']}) + '\n```'
+      : prompt.includes('분석가다') ? JSON.stringify({type:'q', summary:'모의 엔드포인트가 만든 요약입니다.', causes:[{title:'먼저 볼 곳', detail:'모의 응답', unit:nums(/^#(\d+) \[/gm)[0], member:null}], steps:nums(/^#(\d+) \[/gm).slice(0, 5).map(i => ({unit:i, member:null, note:'모의 단계'}))})
+      : '{}';
+    rs.writeHead(200, {'Content-Type':'application/json'}); rs.end(JSON.stringify({model:body.model, choices:[{message:{role:'assistant', content:reply}, finish_reason:'stop'}], usage:{prompt_tokens:1, completion_tokens:1}}));
+  }); });
+  await new Promise(r => mock.listen(0, '127.0.0.1', r));
+  const mockUrl = `http://127.0.0.1:${mock.address().port}/v1`;
+  ok('AI 가 꺼져 있을 때는 검색창이 키워드 검색이라고 알린다', !(await ev(`document.querySelector('#q').placeholder`)).includes('AI') && await ev(`__T.AI.state === 'off'`));
+  await tap('#level .lvnav'); await sleep(300);
+  await tap('#trace [data-act="cfg-ai"]'); await sleep(600);
+  ok('AI 연결 화면이 열리고 아직 정하지 않았다고 나온다', (await text('#cfg')).includes('AI 연결') && (await text('#cfg')).includes('아직 정하지 않았습니다'), (await text('#cfg')).slice(0, 300));
+  await ev(`(() => { const s = document.querySelector('#ai-provider'); s.value = 'openai'; s.dispatchEvent(new Event('change', {bubbles:true})); })()`); await sleep(300);
+  ok('방식을 고르면 그 방식의 칸이 나온다', await ev(`!!document.querySelector('#ai-url') && !!document.querySelector('#ai-auth') && !!document.querySelector('#ai-key') && document.querySelector('#ai-key').type === 'password'`));
+  await ev(`(() => { const set = (sel, v) => { document.querySelector(sel).value = v; }; set('#ai-url', ${JSON.stringify(mockUrl)}); set('#ai-model', 'house-model'); set('#ai-key', 'test-key-ui'); })()`);
+  await snap('10a-ai-settings');
+  await tap('#cfg [data-c="ai-test"]');
+  let c10 = ''; for (let i = 0; i < 40; i++){ await sleep(250); c10 = await text('#cfg'); if (c10.includes('연결되었습니다') || c10.includes('aibar err')) break; }
+  ok('저장하고 연결 시험을 누르면 엔드포인트에 닿는다', c10.includes('연결되었습니다 · 모델 house-model') && c10.includes('켜져 있습니다') && heads[0] === 'Bearer test-key-ui', c10.slice(0, 400));
+  ok('키는 화면으로 돌아오지 않는다', await ev(`!JSON.stringify(__T.API.st).includes('test-key-ui') && document.querySelector('#ai-key').value === '' && __T.API.st.ai.has_key === true`));
+  ok('AI 가 켜지면 검색창이 경로 추적을 알린다', await ev(`__T.AI.state === 'on' && __T.AI.local === true`) && (await ev(`document.querySelector('#q').placeholder`)).includes('AI가 경로를 추적'));
+  await tap('#cfg [data-c="close"]'); await sleep(300);
+  const ask = async q => { await ev(`(() => { const q = document.querySelector('#q'); q.focus(); q.value = ${JSON.stringify(q)}; q.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true})); })()`);
+    for (let i = 0; i < 60; i++){ await sleep(250); if (await ev(`!!(__T.state.trace && __T.state.trace.sc.ai && __T.state.trace.sc.q === ${JSON.stringify(q)}) || !!(__T.state.hits && __T.state.hits.aiMsg)`)) break; } };
+  let p0 = prompts.length;
+  await ask('예약 취소가 안 된다는 문의');
+  ok('TRACE 에 적은 문의를 AI 가 추적해 경로로 보여 준다', await ev(`!!(__T.state.trace && __T.state.trace.sc.ai) && __T.state.trace.steps.length >= 2`) && (await text('#trace')).includes('모의 엔드포인트가 만든 요약입니다') && prompts.length === p0 + 2,
+     (await text('#trace')).slice(0, 300) + ' / 요청 ' + (prompts.length - p0));
+  ok('보낸 글에 문의와 구조 정보가 들어 있고, 서버 구성에만 적은 주소는 없다', prompts.slice(p0).every(p => p.includes('예약 취소가 안 된다는 문의')) && prompts[p0].includes('코드 유닛 목록') && !prompts.some(p => p.includes('10.9.0.5')), prompts.slice(p0).map(p => p.length).join(','));
+  await snap('10b-ai-trace');
+  await ev(`__T.AI.max = 1500`);          // 지도가 한 번에 보낼 크기보다 큰 경우를 흉내 낸다
+  p0 = prompts.length;
+  await ask('결제가 두 번 됐다는 문의');
+  ok('지도가 크면 모듈 단계로 먼저 좁혀 나눠 보낸다', prompts.length === p0 + 3 && prompts[p0].includes('모듈(폴더·패키지) 목록') && prompts[p0 + 1].includes('코드 유닛 목록') && prompts.slice(p0).every(p => p.length < 6000) && await ev(`!!(__T.state.trace && __T.state.trace.sc.ai)`),
+     prompts.slice(p0).map(p => p.length).join(',') + ' / ' + (await text('#trace')).slice(0, 200));
+  await ev(`document.querySelector('#trace [data-act="clear"]').click()`); await sleep(300);
+  if (await ev('__T.state.nav')){ await tap('#level .lvnav'); await sleep(300); }       // 다음 단계가 설정 메뉴를 새로 열 수 있게 닫아 둔다
+  mock.close();
 
   // 8) 자동 정렬로 되돌리기
   await tap('#level .lvnav'); await sleep(300);

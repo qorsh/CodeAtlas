@@ -1,0 +1,4 @@
+# AI 연결(선택 설치). Claude API · Azure 의 Claude 로 TRACE 를 돌릴 때만 필요하다. OpenAI 호환 사내 엔드포인트는 설치 없이 된다.
+#   python3 -m venv .venv && .venv/bin/pip install -r requirements-ai.txt
+# 이미 .venv 가 있으면 뒤의 pip 명령만 실행한다. atlas.py 가 .venv 를 스스로 찾아 쓴다.
+anthropic
