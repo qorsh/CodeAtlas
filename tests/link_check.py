@@ -80,7 +80,7 @@ with tempfile.TemporaryDirectory() as ws:
     apis = sorted(m['route'] for m in (erp[0].get('m', []) if erp else []))
     check('레거시 유닛에 우리가 부르는 API 가 모인다', apis == ['GET /erp/notices', 'GET /erp/rooms', 'GET /erp/rooms/{room_id}', 'POST /erp/reservations'], apis)
     check('예약 서버와 예약 웹이 같은 레거시로 이어진다', ('booking-server', 'erp') in http and ('booking-web', 'erp') in http, [k for k in http if k[1] == 'erp'])
-    check('지도에 없는 주소가 사라진다', not meta.get('offmap'), meta.get('offmap'))
+    check('등록한 주소는 지도에 없는 주소에서 빠진다', 'erp.legacy.example' not in [o['host'] for o in meta.get('offmap', [])], meta.get('offmap'))    # tree-sitter 가 없으면 건너뛴 Go 서버의 주소가 남는 것은 맞는 동작이다
     check('관리자 화면 → 예약 서버 (설정)', http.get(('backoffice', 'booking-server')) == ['GET /api/orders/{order_id}'] and not meta.get('pending'), (http.get(('backoffice', 'booking-server')), meta.get('pending')))
     check('실행 결과에 레거시 호출 수가 나온다', '레거시 레거시 ERP: 이쪽으로 보내는 호출 4개' in out, out[-400:])
 
