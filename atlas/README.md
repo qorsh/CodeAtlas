@@ -10,6 +10,7 @@ python3 atlas/atlas.py -w <이름> init                   # 작업 공간 worksp
 python3 atlas/atlas.py -w <이름> add <폴더 | git 주소>   # 소스 추가. 종류를 감지해 설정에 적는다 (--dry-run 으로 미리보기)
 python3 atlas/atlas.py -w <이름> sync                   # 바뀐 묶음만 다시 분석하고 결과 교체
 python3 atlas/atlas.py -w <이름> status                 # 소스별 기준 커밋, 마지막 결과
+python3 atlas/atlas.py -w <이름> diagnose               # 연결 진단: 시스템마다 내주는 API·부르는 호출이 얼마나 읽히고 이어졌는지, 못 이은 호출의 예
 python3 atlas/atlas.py -w <이름> open                   # 이 컴퓨터에서만 열리는 서버를 띄우고 브라우저로 연다 (설정 패널 포함. 빈 작업 공간도 열린다)
 python3 atlas/atlas.py -w <이름> site                   # 사내 웹 서버에 올릴 정적 파일 묶음 (workspaces/<이름>/site/)
 python3 atlas/atlas.py -w <이름> ingest <접속 로그 | ->   # 실제 요청·응답을 지도에 얹는다 (--follow 로 계속 따라가기)
@@ -140,6 +141,8 @@ SITTER_SPECS['go'] = dict(
 - `systems[].prefix`: 게이트웨이가 경로 앞에 붙이는 접두어. `/shop/api/orders` 로 부르는 호출을 이 서버의 `/api/orders` 에 맞춘다.
 - `external`: 소스 없이 지도에 올리는 시스템(레거시). `hosts`(주소), `paths`(경로 꼴. `*` 는 조각 하나, `**` 는 나머지 전부), `clients`(호출하는 유닛 이름의 정규식) 가운데 하나라도 맞는 호출이 이쪽으로 간다. 시스템마다 유닛 하나가 생기고 우리가 부르는 API 가 멤버가 된다.
 - `link.calls`: 경로가 여러 서버에 맞을 때 고를 서버(앞에 적은 것 먼저). `link.never`: 잇지 않을 서버.
+
+경로가 그대로는 어느 서버와도 맞지 않는 호출은 접두어를 추정해 맞춘다. 호출 앞에 무언가 더 붙었거나(게이트웨이·WAS 의 컨텍스트 경로) 앞부분이 빠진(기준 주소에 경로가 든) 꼴인데, 같은 접두어로 맞는 호출이 셋 이상(또는 그 시스템의 못 맞춘 호출 절반 이상이면서 둘 이상)일 때만 받아들인다. 맞춘 접두어와 시스템별 집계는 `atlas-manifest.json` 의 `summary.diag` 에 남고 `diagnose` 명령과 설정 패널이 보여 준다.
 
 호출 대상을 가리는 순서와 근거는 `atlas.py` 의 `resolve_calls` 에 적혀 있다. 끝내 못 가린 호출은 선을 긋지 않고 결과의 `meta.pending` 에 남기고, 지도에 없는 주소로 가는 호출은 `meta.offmap` 에 모은다. `sync` 출력의 "호출 대상:" 줄이 근거별 건수다.
 

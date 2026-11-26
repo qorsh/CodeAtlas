@@ -105,6 +105,19 @@ python3 atlas/atlas.py -w myproduct open
 
 설정 파일에 직접 적을 때는 [atlas/README.md](atlas/README.md) 의 "설정 파일"을 본다.
 
+## 연결이 안 보일 때: 연결 진단
+
+앱과 서버 사이에 선이 없으면 셋 중 하나다. 서버가 내주는 API 를 못 읽었거나, 앱이 부르는 호출을 못 읽었거나, 둘의 경로가 다르다. 어느 쪽인지는 연결 진단이 알려 준다.
+
+```bash
+python3 atlas/atlas.py -w myproduct diagnose
+```
+
+시스템마다 "내주는 API 몇 개 · 부르는 호출 몇 개 중 이어진 것 몇 개"와, 못 이은 호출의 예와 API 의 예를 나란히 보여 준다. 설정 패널의 "연결 진단"에도 같은 내용이 나오고, 확인할 것이 있으면 왼쪽 위 상자와 `sync` 출력에도 뜬다.
+
+- **경로 앞부분만 다른 경우**(게이트웨이나 WAS 가 붙이는 컨텍스트 경로, 기준 주소에 든 `/api`)는 자동으로 맞춘다. 같은 접두어를 떼거나 붙였을 때 맞는 호출이 여럿일 때만 그렇게 하고, 무엇을 맞췄는지 진단에 적는다. 자동으로 안 맞으면 설정 패널에서 서버의 "경로 접두어"를 적는다.
+- **API 나 호출을 아예 못 읽은 경우**는 그 프레임워크의 규칙이 없는 것이다. 읽을 수 있는 서버 API 는 Spring MVC 어노테이션, NestJS, Express, FastAPI·Flask, Go 이고, 앱 호출은 Retrofit 어노테이션, `"$BASE_URL/경로"` 꼴, `get("경로")`·`request("경로")` 꼴, axios·fetch, requests 다. 그 밖의 것은 `workspaces/myproduct/rules/*.json` 에 규칙을 더한다([atlas/README.md](atlas/README.md)).
+
 ## 요청·응답 흐름과 비정상 응답
 
 두 겹으로 보여 준다.

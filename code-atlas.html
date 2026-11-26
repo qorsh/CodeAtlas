@@ -1382,8 +1382,9 @@ const pendingCount = () => SCALE === 1 ? UNITS.reduce((a,u) => a + (u.pend ? u.p
 function renderPending(){
   const el = $('#pendbox'); if (!el) return;
   const n = pendingCount(), off = SCALE === 1 && META.offmap ? META.offmap.length : 0;
-  if (!n && !off){ el.hidden = true; el.innerHTML = ''; return; }
-  el.innerHTML = (n ? `<b>확인이 필요한 호출 ${n}</b><br>` : '') + (off ? `지도에 없는 주소로 가는 호출 ${off}곳<br>` : '')
+  const probs = API.ok && API.st && SCALE === 1 ? (API.st.findings || []).filter(f => f.kind !== 'prefix').length : 0;      // 연결 진단에서 확인할 것
+  if (!n && !off && !probs){ el.hidden = true; el.innerHTML = ''; return; }
+  el.innerHTML = (probs ? `<b>연결 진단: 확인할 것 ${probs}</b><br>` : '') + (n ? `<b>확인이 필요한 호출 ${n}</b><br>` : '') + (off ? `지도에 없는 주소로 가는 호출 ${off}곳<br>` : '')
     + (n ? `<button class="mini-act" data-act="pending" style="color:#FFB454;border-color:#FFB454">목록 보기</button>` : '') + (API.ok ? `<button class="mini-act" data-act="cfg">설정</button>` : '');
   el.hidden = false;
 }
@@ -1614,7 +1615,7 @@ function renderConfig(){
   }
   const src = st.sources.map(x => `<div class="crow"><span class="nm">${esc(x.path || x.git)}<small>${esc(x.name)} · 시스템 ${x.systems.length}${x.systems.length ? ' (' + x.systems.map(sysName).map(esc).join(', ') + ')' : ''}</small></span><button class="mini-act" data-c="remove" data-v="${esc(x.name)}"${CFG.confirm === 'src:' + x.name ? ' style="color:#FF5A6A;border-color:#FF3B4E"' : ''}>${CFG.confirm === 'src:' + x.name ? '한 번 더 누르면 뺍니다' : '빼기'}</button></div>`).join('') || `<p class="note">아직 추가한 폴더가 없습니다.</p>`;
   const serves = new Set(UNITS.filter(u => u.m.some(m => m.route)).map(u => u.sys));      // API 를 내주는 시스템에만 서버 주소 칸을 둔다
-  const sys = st.systems.map(y => `<div class="crow"><span class="nm" style="flex:1 1 120px">${esc(y.id)}<small>${esc(y.sub)}${y.skipped ? ' · 문법 패키지가 없어 건너뜀' : ''}</small></span><input type="text" data-sysname="${esc(y.id)}" value="${esc(y.name)}" placeholder="지도에 보일 이름" aria-label="${esc(y.id)} 이름">${serves.has(y.id) || y.hosts.length ? `<input type="text" data-host="${esc(y.id)}" value="${esc(y.hosts.join(', '))}" placeholder="서버 주소 (예: api.example.com)" spellcheck="false" aria-label="${esc(y.name)} 서버 주소">` : ''}<button class="mini-act" data-c="sys-save" data-v="${esc(y.id)}">저장</button></div>`).join('');
+  const sys = st.systems.map(y => `<div class="crow"><span class="nm" style="flex:1 1 120px">${esc(y.id)}<small>${esc(y.sub)}${y.skipped ? ' · 문법 패키지가 없어 건너뜀' : ''}</small></span><input type="text" data-sysname="${esc(y.id)}" value="${esc(y.name)}" placeholder="지도에 보일 이름" aria-label="${esc(y.id)} 이름">${serves.has(y.id) || y.hosts.length || y.prefix.length ? `<input type="text" data-host="${esc(y.id)}" value="${esc(y.hosts.join(', '))}" placeholder="서버 주소 (예: api.example.com)" spellcheck="false" aria-label="${esc(y.name)} 서버 주소"><input type="text" data-prefix="${esc(y.id)}" value="${esc(y.prefix.join(', '))}" placeholder="경로 접두어 (예: /api)" spellcheck="false" aria-label="${esc(y.name)} 경로 접두어" style="flex:0 1 150px">` : ''}<button class="mini-act" data-c="sys-save" data-v="${esc(y.id)}">저장</button></div>`).join('');
   const seen = (M.hosts_seen || []).filter(h => !h.owner).map(h => h.host).slice(0, 14);
   const xs = (st.external || []).map(x => `<div class="crow"><span class="nm">${esc(x.name)}<small>${[x.hosts && '주소 ' + x.hosts.join(', '), x.paths && '경로 ' + x.paths.join(', '), x.clients && '클라이언트 ' + x.clients].filter(Boolean).map(esc).join(' · ')}${st.summary.external && st.summary.external[x.id] ? ' · 보내는 호출 ' + st.summary.external[x.id].calls : ''}</small></span><button class="mini-act" data-c="ext-remove" data-v="${esc(x.id)}"${CFG.confirm === 'ext:' + x.id ? ' style="color:#FF5A6A;border-color:#FF3B4E"' : ''}>${CFG.confirm === 'ext:' + x.id ? '한 번 더 누르면 뺍니다' : '빼기'}</button></div>`).join('');
   const off = (M.offmap || []).map(o => `<div class="crow"><span class="nm">${esc(o.host)}<small>호출 ${o.n} · ${o.systems.map(sysName).map(esc).join(', ')} · ${o.paths.map(esc).join(' ')}</small></span><button class="mini-act" data-c="ext-from" data-v="${esc(o.host)}">레거시로 등록</button></div>`).join('');
@@ -1625,11 +1626,21 @@ function renderConfig(){
   const rules = [...Object.entries(st.link.calls).flatMap(([a,ts]) => ts.map(t => [a, t, '애매하면 이 서버로 본다'])), ...Object.entries(st.link.never).flatMap(([a,ts]) => ts.map(t => [a, t, '잇지 않는다']))]
     .map(([a,t,w]) => `<div class="crow"><span class="nm">${esc(sysName(a))} → ${esc(sysName(t))}<small>${w}</small></span><button class="mini-act" data-c="link-clear" data-from="${esc(a)}" data-to="${esc(t)}">지우기</button></div>`).join('');
   const X = CFG.ext || {};
+  // 연결 진단: 시스템마다 내주는 API 와 부르는 호출이 얼마나 읽히고 이어졌는지. 선이 없을 때 어느 쪽이 빠졌는지 가린다
+  const dg = st.summary.diag, finds = st.findings || [], probs = finds.filter(f => f.kind !== 'prefix'), flagged = new Set(probs.map(f => f.id));
+  const showEx = probs.some(f => f.kind === 'mismatch');
+  const dsum = dg ? dg.systems.reduce((a, x) => { a.r += x.routes; a.c += x.calls; a.l += x.linked; return a; }, {r:0, c:0, l:0}) : null;
+  const drows = dg && probs.length ? dg.systems.filter(x => x.routes || x.calls || flagged.has(x.id)).map(x => `<div class="crow"><span class="nm">${esc(sysName(x.id))}<small>${[x.routes ? `내주는 API ${x.routes}` : '',
+      x.calls ? `부르는 호출 ${x.calls} 중 이어진 것 ${x.linked}${x.pending ? ` · 확인 필요 ${x.pending}` : ''}${x.external ? ` · 레거시 ${x.external}` : ''}${x.unmatched ? ` · 못 이은 것 ${x.unmatched}` : ''}` : ''].filter(Boolean).join(' · ') || '내주는 API 도, 부르는 호출도 없음'}</small>${x.routes && showEx ? `<small>API 예: ${x.route_ex.map(esc).join(' · ')}</small>` : ''}${x.unmatched && flagged.has(x.id) ? `<small style="color:#FFB454">못 이은 호출 예: ${x.call_ex.map(esc).join(' · ')}</small>` : ''}</span></div>`).join('') : '';
+  const diag = dg ? `<section><h3${probs.length ? ' style="color:#FFB454"' : ''}>연결 진단 <em>${probs.length ? `확인할 것 ${probs.length}` : '눈에 띄는 문제 없음'}</em></h3>
+      ${finds.map(f => `<div class="aibar${f.kind === 'prefix' ? '' : ' err'}" style="margin-bottom:6px"><span>${esc(f.text)}</span></div>`).join('')}${drows}
+      <p class="note" style="margin-top:6px">내주는 API ${dsum.r.toLocaleString()}개 · 부르는 호출 ${dsum.c.toLocaleString()}개 중 이어진 것 ${dsum.l.toLocaleString()}개.${probs.some(f => f.kind === 'no-routes' || f.kind === 'silent') ? ' ' + esc(st.reads || '') : ''}</p></section>` : '';
   el.innerHTML = head + `<div class="side-body">${top}
     <section><h3>소스 폴더 <em>${st.sources.length}</em></h3>${src}<div class="acts" style="margin-top:10px"><button class="act" data-c="open-add">폴더 추가</button><button class="act" data-c="sync">다시 분석</button></div>
       <p class="note" style="margin-top:6px">마지막 분석 ${esc((st.built_at || '없음').replace('T', ' '))} · 유닛 ${(st.summary.units || 0).toLocaleString()} · 연결 ${(st.summary.edges || 0).toLocaleString()}. 같은 서버는 한 번만 넣어야 지도에 하나로 나옵니다.</p></section>
+    ${diag}
     ${pend || rules ? `<section>${pend ? `<h3 style="color:#FFB454">확인이 필요한 호출 <em>어느 서버를 부르는지 정해 주세요</em></h3>` : `<h3>부르는 서버 지정 <em>${rules ? '정해 둔 것' : ''}</em></h3>`}${pend}${rules}</section>` : ''}
-    ${st.systems.length ? `<section><h3>시스템 이름과 서버 주소 <em>${st.systems.length}</em></h3>${sys}<p class="note" style="margin-top:6px">이름은 지도에 보이는 이름입니다. 서버 주소를 적어 두면, 그 주소로 가는 호출은 경로가 다른 서버와 겹쳐도 이 서버에 붙습니다. 쉼표로 여러 개를 적을 수 있습니다.${seen.length ? ' 코드에서 본 주소: ' + seen.map(esc).join(', ') : ''}</p></section>` : ''}
+    ${st.systems.length ? `<section><h3>시스템 이름과 서버 주소 <em>${st.systems.length}</em></h3>${sys}<p class="note" style="margin-top:6px">이름은 지도에 보이는 이름입니다. 경로 접두어는 게이트웨이나 WAS 가 경로 앞에 붙이는 부분입니다(대개는 자동으로 맞춥니다). 서버 주소를 적어 두면, 그 주소로 가는 호출은 경로가 다른 서버와 겹쳐도 이 서버에 붙습니다. 쉼표로 여러 개를 적을 수 있습니다.${seen.length ? ' 코드에서 본 주소: ' + seen.map(esc).join(', ') : ''}</p></section>` : ''}
     <section><h3>레거시 <em>소스 없이 지도에 올리는 시스템</em></h3>${xs}${off ? `<p class="note" style="margin:8px 0 4px">지도에 없는 주소로 가는 호출</p>${off}` : ''}
       <div class="cform" style="margin-top:10px"><input type="text" id="x-name" value="${esc(X.name || '')}" placeholder="이름 (예: 레거시 ERP)"><input type="text" id="x-hosts" value="${esc(X.hosts || '')}" placeholder="주소 (예: erp.example.com)" spellcheck="false">
         <input type="text" id="x-paths" value="${esc(X.paths || '')}" placeholder="경로 꼴 (예: /erp/**)" spellcheck="false"><input type="text" id="x-clients" value="${esc(X.clients || '')}" placeholder="클라이언트 이름 꼴 (예: Erp.*Client)" spellcheck="false"><button class="act" data-c="ext-add">레거시 등록</button></div>
@@ -1669,7 +1680,8 @@ function bindConfig(){
     else if (c === 'remove'){ if (armed !== 'src:' + v) CFG.confirm = 'src:' + v; else if (await call('remove', {source:v})) CFG.dirty = true; }
     else if (c === 'sys-save'){
       const nm = [...document.querySelectorAll('#cfg input[data-sysname]')].find(x => x.dataset.sysname === v), hs = [...document.querySelectorAll('#cfg input[data-host]')].find(x => x.dataset.host === v);
-      const body = {id:v, name:nm ? nm.value.trim() : ''}; if (hs) body.hosts = hs.value;
+      const px = [...document.querySelectorAll('#cfg input[data-prefix]')].find(x => x.dataset.prefix === v);
+      const body = {id:v, name:nm ? nm.value.trim() : ''}; if (hs) body.hosts = hs.value; if (px) body.prefix = px.value;
       if (await call('system', body)) CFG.dirty = true;
     }
     else if (c === 'ext-from'){ CFG.ext = {hosts:v}; }

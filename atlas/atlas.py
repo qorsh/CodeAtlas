@@ -5,6 +5,7 @@
   python3 atlas/atlas.py -w <이름> add <폴더 | git 주소> [--name N] [--branch B] [--dry-run]
   python3 atlas/atlas.py -w <이름> sync [--no-fetch] [--pull] [--force]   바뀐 묶음만 다시 분석하고 결과를 교체
   python3 atlas/atlas.py -w <이름> status                     소스별 기준 커밋과 마지막 결과
+  python3 atlas/atlas.py -w <이름> diagnose                   연결 진단: 시스템마다 내주는 API·부르는 호출이 얼마나 읽히고 이어졌는지
   python3 atlas/atlas.py -w <이름> open                       이 컴퓨터에서 지도 열기 (로컬 서버 + 브라우저)
   python3 atlas/atlas.py -w <이름> site [뷰어 html] [출력 폴더]   사내 웹 서버에 올릴 정적 파일 묶음 만들기
   python3 atlas/atlas.py -w <이름> ingest <접속 로그 | -> [--follow]   실제 요청·응답을 지도에 얹기 (비정상 응답은 붉게 깜박인다)
@@ -329,7 +330,9 @@ def resolve_calls(cfg, units, routes, http, hosts):
       언급한 주소   부르는 시스템의 코드에 적힌 주소(기준 주소 상수 등)의 주인이 후보 가운데 하나뿐이다
       같은 저장소   후보 가운데 같은 소스에 든 서버가 하나뿐이다
       주로 부르는 서버   이 시스템의 다른 호출이 몰리는 서버 (추정으로 표시)
-    여기까지 와도 못 정하면 선을 긋지 않고 '확인이 필요한 호출'로 남긴다."""
+    여기까지 와도 못 정하면 선을 긋지 않고 '확인이 필요한 호출'로 남긴다.
+    경로가 그대로는 어느 서버와도 맞지 않는 호출은, 같은 접두어를 떼거나 붙였을 때 맞는 호출이 여럿이면 그 접두어로 맞춘다(접두어 추정).
+    돌려주는 diag 는 시스템별 집계와 추정한 접두어다(연결 진단)."""
     L = cfg.get('link', {})
     ext_cfg = cfg.get('external', [])
     src_of = {s['id']: s['source'] for s in cfg['systems']}
@@ -358,7 +361,14 @@ def resolve_calls(cfg, units, routes, http, hosts):
             o['paths'].append(shown)
 
     resolved, pending, external, offmap, how_n, seen = [], [], {}, {}, {}, set()
-    first, learned = [], {}
+    first, learned, unmatched, stat = [], {}, [], {}
+    loose = lambda rule: rule.startswith('client-slash-literal')         # 슬래시로 시작하는 문자열을 다 건지는 넓은 그물: 안 맞은 것은 대부분 호출이 아니다
+
+    def tally(cs, what):
+        t = stat.setdefault(cs, dict(calls=0, linked=0, pending=0, external=0, unmatched=0, ex=[]))
+        t['calls'] += 1
+        t[what] += 1
+        return t
     for u, mi, method, path, rule, pos in http:
         if (u, pos) in seen:          # 같은 자리를 여러 규칙이 잡았으면 한 번만 센다
             continue
@@ -374,6 +384,7 @@ def resolve_calls(cfg, units, routes, http, hosts):
         if x:
             external.setdefault(x['id'], []).append((u, mi, method, segs, rule))
             how_n['external'] = how_n.get('external', 0) + 1
+            tally(cs, 'external')
             continue
         per = {}
         for sid, rs in by_sys.items():
@@ -383,16 +394,15 @@ def resolve_calls(cfg, units, routes, http, hosts):
             if r and r['unit'] != u:
                 per[sid] = r
         if not per:
-            if host and not owner and not _NOISE_HOST.match(host):
-                off(host, cs, segs)
-            elif not host and not rule.startswith('client-'):      # 경로만 쓴 호출인데 지도 안에 맞는 서버가 없다: 같은 파일에 적힌 주소가 하나면 그리로 가는 것으로 본다
+            if not host and not rule.startswith('client-'):      # 경로만 쓴 호출인데 지도 안에 맞는 서버가 없다: 같은 파일에 적힌 주소가 등록한 레거시 하나의 것이면 그리로 간다
                 fh = [h for h in file_hosts.get((cs, units[u]['file']), ()) if not _NOISE_HOST.match(h) and not owner_of(h)]
                 xs = [x for x in ext_cfg if any(host_match(h, x.get('hosts', [])) for h in fh)]
                 if len(xs) == 1:
                     external.setdefault(xs[0]['id'], []).append((u, mi, method, segs, rule))
                     how_n['external'] = how_n.get('external', 0) + 1
-                elif not xs and len(fh) == 1:
-                    off(fh[0], cs, segs)
+                    tally(cs, 'external')
+                    continue
+            unmatched.append((u, mi, method, path, rule, host, owner, segs))      # 접두어 추정에서 한 번 더 본다
             continue
         first.append((u, mi, method, path, rule, host, owner, per))
         if len(per) == 1 and host and not owner:
@@ -440,13 +450,83 @@ def resolve_calls(cfg, units, routes, http, hosts):
         if pick:
             resolved.append((u, mi, rule, per[pick], how))
             how_n[how] = how_n.get(how, 0) + 1
+            tally(cs, 'linked')
         else:
             pending.append((u, mi, method, path, rule, per))
+            tally(cs, 'pending')
+
+    # 접두어 추정. 경로가 그대로는 어느 서버와도 맞지 않는 호출 가운데, 앞에 무언가 더 붙었거나(게이트웨이·WAS 가 붙이는 컨텍스트 경로)
+    # 앞부분이 빠진(기준 주소에 경로가 들어 있는) 꼴을 찾는다. 우연히 맞는 것을 막으려고, 같은 접두어로 맞는 호출이 여럿일 때에만 받아들인다.
+    shape = lambda method, segs: (method, tuple(':' if g.startswith(':') else g for g in segs))
+    last_lit, last_any = {}, []
+    for sid, rs in by_sys.items():
+        for r in rs:
+            if not r.get('pfx') and r['segs']:
+                (last_any if r['segs'][-1].startswith(':') else last_lit.setdefault(r['segs'][-1], [])).append((sid, r))
+    votes, real_n = {}, {}
+    for i, (u, mi, method, path, rule, host, owner, segs) in enumerate(unmatched):
+        cs = units[u]['sys']
+        if not loose(rule):
+            real_n.setdefault(cs, set()).add(shape(method, segs))
+        if not segs or (loose(rule) and len(segs) < 2):
+            continue
+        for sid, r in last_any + ([] if segs[-1].startswith(':') else last_lit.get(segs[-1], [])):
+            if sid == cs or (owner and sid != owner) or sid in L.get('never', {}).get(cs, []) or r['unit'] == u:
+                continue
+            rsegs, n, m = r['segs'], len(segs), len(r['segs'])
+            same = lambda a, b: any(x == y and not x.startswith(':') for x, y in zip(a, b))      # 글자 그대로 같은 조각이 하나는 있어야 한다. /c/{slug} 같은 라우트는 무엇이든 받아 주므로 근거가 못 된다
+            if n > m and not any(g.startswith(':') for g in segs[:n - m]) and same(rsegs, segs[n - m:]) and match_route([dict(r, segs=rsegs)], method, segs[n - m:]):
+                key = (cs, sid, 'strip', tuple(segs[:n - m]))          # 호출 앞에 접두어가 붙어 있다
+            elif m > n and not any(g.startswith(':') for g in rsegs[:m - n]) and same(rsegs[m - n:], segs) and match_route([dict(r, segs=rsegs[m - n:])], method, segs):
+                key = (cs, sid, 'add', tuple(rsegs[:m - n]))           # 호출에 접두어가 빠져 있다
+            else:
+                continue
+            votes.setdefault(key, {}).setdefault(i, r)
+    support = {k: min(len({shape(unmatched[i][2], unmatched[i][7]) for i in v}), len({id(r) for r in v.values()}) + 1) for k, v in votes.items()}     # 서로 다른 호출이 서로 다른 API 에 맞아야 근거가 된다
+    accepted = {k for k, n in support.items() if n >= 3 or (n >= 2 and n * 2 >= len(real_n.get(k[0], ())))}
+    used, taken = {}, set()
+    for i, (u, mi, method, path, rule, host, owner, segs) in enumerate(unmatched):
+        keys = [k for k in accepted if i in votes[k]]
+        if keys:
+            k = max(keys, key=lambda k: (support[k], -len(k[3])))
+            resolved.append((u, mi, rule, votes[k][i], 'prefix'))
+            how_n['prefix'] = how_n.get('prefix', 0) + 1
+            used[k] = used.get(k, 0) + 1
+            taken.add(i)
+            tally(units[u]['sys'], 'linked')
+    prefixes = [dict(frm=k[0], to=k[1], kind=k[2], prefix='/' + '/'.join(k[3]), n=n) for k, n in sorted(used.items(), key=lambda kv: -kv[1])]
+    for i, (u, mi, method, path, rule, host, owner, segs) in enumerate(unmatched):       # 끝내 못 맞춘 호출
+        if i in taken:
+            continue
+        cs = units[u]['sys']
+        if host and not owner and not _NOISE_HOST.match(host):
+            off(host, cs, segs)
+        elif not host and not rule.startswith('client-'):
+            fh = [h for h in file_hosts.get((cs, units[u]['file']), ()) if not _NOISE_HOST.match(h) and not owner_of(h)]
+            if len(fh) == 1 and not any(host_match(fh[0], x.get('hosts', [])) for x in ext_cfg):
+                off(fh[0], cs, segs)
+        if not loose(rule):
+            t = tally(cs, 'unmatched')
+            shown = f"{method} /" + '/'.join('{' + g[1:] + '}' if g.startswith(':') else g for g in segs)
+            if shown not in t['ex'] and len(t['ex']) < 6:
+                t['ex'].append(shown)
+    # 연결 진단: 시스템마다 내주는 API 와 부르는 호출이 얼마나 읽혔고 얼마나 이어졌는지. 선이 없을 때 어느 쪽이 빠졌는지 가리는 근거다
+    n_units, n_hosts = {}, {}
+    for x in units:
+        n_units[x['sys']] = n_units.get(x['sys'], 0) + 1
+    for u, h in hosts:                       # 코드에 서버 주소가 적혀 있는가: 호출을 못 읽은 앱을 가려내는 단서
+        if not _NOISE_HOST.match(norm_host(h)):
+            n_hosts.setdefault(units[u]['sys'], set()).add(norm_host(h))
+    diag = []
+    for y in cfg['systems']:
+        rs, t = [r for r in by_sys.get(y['id'], []) if not r.get('pfx')], stat.get(y['id'], {})
+        diag.append(dict(id=y['id'], lang=y.get('lang', ''), units=n_units.get(y['id'], 0), hosts=len(n_hosts.get(y['id'], ())), routes=len(rs), route_ex=[f"{r['method']} {r['path']}" for r in rs[:5]],
+                         calls=t.get('calls', 0), linked=t.get('linked', 0), pending=t.get('pending', 0), external=t.get('external', 0), unmatched=t.get('unmatched', 0), call_ex=t.get('ex', [])))
     # 같은 서버를 두 번 넣은 것으로 보이는 쌍: 라우트 목록이 통째로 같다
     sets = {sid: frozenset((r['method'], tuple(':' if g.startswith(':') else g for g in r['segs'])) for r in rs if not r.get('pfx')) for sid, rs in by_sys.items()}
     ids = sorted(sid for sid, v in sets.items() if len(v) >= 3)
     twins = [[a, b] for i, a in enumerate(ids) for b in ids[i + 1:] if sets[a] == sets[b]]
-    return dict(resolved=resolved, pending=pending, external=external, how=how_n, twins=twins,
+    return dict(resolved=resolved, pending=pending, external=external, how=how_n, twins=twins, diag=dict(systems=diag, prefixes=prefixes),
                 offmap=sorted(offmap.values(), key=lambda o: -o['n']), hosts_seen=sorted(seen_hosts.values(), key=lambda e: (not e['owner'], e['host'])))
 
 
@@ -645,7 +725,7 @@ def link(cfg, results, sources, rules):
     summary = dict(units=len(units), members=sum(len(u.get('m', [])) for u in units), edges=len(edges),
                    by_kind={k: sum(1 for e in edges if e['k'] == k) for k in sorted(set(e['k'] for e in edges))},
                    routes=len(routes), open_routes=len(open_routes), http_candidates=len(http),
-                   resolved=api['how'], pending=len(pending), offmap=len(api['offmap']), twins=api['twins'],
+                   resolved=api['how'], pending=len(pending), offmap=len(api['offmap']), twins=api['twins'], diag=api['diag'],
                    external={x['id']: dict(calls=len(api['external'].get(x['id'], [])), name=x.get('name', x['id'])) for x in ext_cfg},
                    unmatched_db=sum(1 for x in dbacc if not any(k[1] == norm_table(x[3]) for k in table_idx)))
     return [meta] + units + [dict(rt='edge', **e) for e in edges], summary
@@ -750,7 +830,7 @@ def cmd_sync(cfg, args):
         print(f"  건너뜀 {x['id']}: {x['lang']} 문법이 없습니다. 설치: pip install tree-sitter {x['need']}  (requirements-parsers.txt 참고)")
     print(f"결과: 유닛 {summary['units']} · 메서드 {summary['members']} · 연결 {summary['edges']} {summary['by_kind']}")
     print(f"접점: 제공 API {summary['routes']}개 중 호출자 없는 것 {summary['open_routes']}개 · 호출 후보 {summary['http_candidates']}개")
-    how, names = summary.get('resolved', {}), dict(unique='맞는 서버가 하나', host='주소', calls='설정', self='자기 시스템', mention='코드에 적힌 주소', source='같은 저장소', affinity='주로 부르는 서버(추정)', external='레거시')
+    how, names = summary.get('resolved', {}), dict(unique='맞는 서버가 하나', host='주소', calls='설정', self='자기 시스템', mention='코드에 적힌 주소', source='같은 저장소', affinity='주로 부르는 서버(추정)', prefix='접두어를 맞춰서', external='레거시')
     if how:
         print('호출 대상: ' + ' · '.join(f'{names[k]} {how[k]}' for k in names if how.get(k)) + (f" · 확인 필요 {summary['pending']}" if summary.get('pending') else ''))
     for sid, x in summary.get('external', {}).items():
@@ -761,6 +841,7 @@ def cmd_sync(cfg, args):
         print(f"  지도에 없는 주소로 가는 호출이 {summary['offmap']}곳 있습니다. 레거시라면 설정의 external 에 등록하면 지도에 나옵니다.")
     for a, b in summary.get('twins', []):
         print(f"  주의: {a} 와 {b} 의 API 목록이 똑같습니다. 같은 서버를 두 번 넣었다면 하나를 빼세요.")
+    print_diag(summary, {s['id']: s['name'] for s in cfg['systems']})
     if unchanged:
         print(f"변경 없음. 버전 {manifest['version']} 유지 · {time.time() - t0:.1f}초")
     else:
@@ -893,6 +974,64 @@ def detect(root, name):
             found.append(dict(id=base.lower(), name=base, sub='Go', lang='go', roots=[rel(cur)]))
             dirs[:] = []
     return found
+
+
+APP_LANGS = ('swift', 'kotlin', 'java', 'ts', 'js')
+READS = '읽을 수 있는 서버 API: Spring MVC 어노테이션 · NestJS · Express · FastAPI·Flask · Go.  앱 호출: Retrofit 어노테이션 · "$BASE_URL/경로" 꼴 · get("경로")·request("경로") 꼴 · axios·fetch · requests.'
+
+
+def diag_findings(summary, names):
+    """연결 진단에서 사람이 봐야 할 것만 문장으로. (종류, 시스템 id, 문장) 목록. 화면의 설정 패널도 같은 판단을 쓴다."""
+    d = summary.get('diag') or {}
+    S, out = d.get('systems', []), []
+    nm = lambda sid: names.get(sid, sid)
+    if not S:
+        return out
+    if not sum(x['routes'] for x in S) and any(x['calls'] for x in S):
+        out.append(('no-routes', '', '서버가 내주는 API 를 하나도 읽지 못했습니다. 서버 프레임워크의 규칙이 없거나 서버 소스가 빠져 있습니다.'))
+    for p in d.get('prefixes', []):
+        out.append(('prefix', p['frm'], f"{nm(p['frm'])} → {nm(p['to'])}: " + (f"호출 경로 앞의 {p['prefix']} 를 떼면 맞아서 {p['n']}개를 이었습니다." if p['kind'] == 'strip'
+                                                                              else f"호출에는 없는 {p['prefix']} 가 API 경로 앞에 붙어 있어, 붙여서 {p['n']}개를 이었습니다.")))
+    for x in S:
+        if x['calls'] >= 3 and not x['linked'] and not x['pending'] and not x['external']:
+            out.append(('mismatch', x['id'], f"{nm(x['id'])}: 호출 {x['calls']}개를 읽었지만 어느 API 와도 경로가 맞지 않습니다. 호출 예와 API 예를 견줘 보세요."))
+        elif not x['routes'] and not x['calls'] and x.get('hosts') and x['lang'] in APP_LANGS:      # 코드에 서버 주소는 적혀 있는데 호출이 하나도 안 잡혔다
+            out.append(('silent', x['id'], f"{nm(x['id'])}: 코드에 서버 주소가 {x['hosts']}개 적혀 있는데 API 호출은 하나도 잡히지 않았습니다. 호출 방식을 아직 읽지 못하는 것으로 보입니다."))
+    return out
+
+
+def print_diag(summary, names, full=False):
+    d, finds = summary.get('diag') or {}, diag_findings(summary, names)
+    if not d.get('systems') or not (full or finds):
+        return
+    print('연결 진단')
+    flagged = {sid for _, sid, _ in finds}
+    for x in d['systems']:
+        if not (x['routes'] or x['calls'] or full or x['id'] in flagged):
+            continue
+        parts = ([f"내주는 API {x['routes']}개"] if x['routes'] else []) + ([f"부르는 호출 {x['calls']}개 중 이어진 것 {x['linked']}" + (f" · 확인 필요 {x['pending']}" if x['pending'] else '')
+                 + (f" · 레거시 {x['external']}" if x['external'] else '') + (f" · 못 이은 것 {x['unmatched']}" if x['unmatched'] else '')] if x['calls'] else [])
+        print(f"  {names.get(x['id'], x['id'])}: " + (' · '.join(parts) or '내주는 API 도, 부르는 호출도 없음'))
+        if x['routes'] and (full or any(k == 'mismatch' for k, _, _ in finds)):
+            print('      API 예: ' + ', '.join(x['route_ex']))
+        if x['unmatched'] and (full or x['id'] in flagged):
+            print('      못 이은 호출 예: ' + ', '.join(x['call_ex']))
+    for kind, sid, text in finds:
+        print('  → ' + text)
+    if any(k in ('no-routes', 'silent') for k, _, _ in finds):
+        print('  ' + READS)
+
+
+def cmd_diagnose(cfg, args):
+    mpath = os.path.join(cfg['_dir'], cfg.get('out', '.'), 'atlas-manifest.json')
+    if not os.path.exists(mpath):
+        raise SystemExit('아직 결과가 없습니다. sync 를 먼저 실행하세요.')
+    summary = json.load(open(mpath, encoding='utf-8')).get('summary', {})
+    if not summary.get('diag'):
+        raise SystemExit('이 결과에는 진단 정보가 없습니다. sync 를 한 번 다시 실행하세요.')
+    print_diag(summary, {s['id']: s['name'] for s in cfg['systems']}, full=True)
+    if not diag_findings(summary, {}):
+        print('  눈에 띄는 문제는 없습니다.')
 
 
 def adopt_systems(cfg, name, systems):
@@ -1229,7 +1368,8 @@ def make_server(cfg, port=0):
                     systems=[dict(id=y['id'], name=y['name'], sub=y.get('sub', ''), lang=y['lang'], source=y['source'], hosts=y.get('hosts', []), prefix=y.get('prefix', []),
                                   skipped=table.get(y['lang'], '').startswith('문법 없음')) for y in c['systems']],
                     external=c.get('external', []), link=dict(calls=c['link'].get('calls', {}), never=c['link'].get('never', {})),
-                    built_at=man.get('built_at', ''), version=man.get('version', ''), summary=man.get('summary', {}), job=dict(job, log=job['log'][-60:]))
+                    built_at=man.get('built_at', ''), version=man.get('version', ''), summary=man.get('summary', {}), job=dict(job, log=job['log'][-60:]),
+                    findings=[dict(kind=k, id=sid, text=t) for k, sid, t in diag_findings(man.get('summary', {}), {y['id']: y['name'] for y in c['systems']})], reads=READS)
 
     def words(v, limit=30):
         """화면에서 온 목록 값: 문자열 목록이나 쉼표로 나눈 문자열을 받아 깨끗한 목록으로."""
@@ -1458,6 +1598,7 @@ def main():
     p = sub.add_parser('add'); p.add_argument('target'); p.add_argument('--name'); p.add_argument('--branch'); p.add_argument('--dry-run', action='store_true')
     p = sub.add_parser('sync'); p.add_argument('--no-fetch', action='store_true'); p.add_argument('--pull', action='store_true'); p.add_argument('--force', action='store_true')
     sub.add_parser('status')
+    sub.add_parser('diagnose')
     p = sub.add_parser('site'); p.add_argument('viewer', nargs='?'); p.add_argument('out', nargs='?')
     p = sub.add_parser('open'); p.add_argument('--port', type=int, default=0); p.add_argument('--no-browser', action='store_true')
     p = sub.add_parser('ingest'); p.add_argument('logs', nargs='*'); p.add_argument('--follow', action='store_true'); p.add_argument('--window', type=int, default=300)
@@ -1480,7 +1621,7 @@ def main():
     if not os.path.exists(args.config):
         raise SystemExit(f'{args.config} 가 없습니다. 먼저 init 을 실행하세요 (예: python3 atlas/atlas.py -w <이름> init).')
     cfg = load_config(args.config)
-    {'add': cmd_add, 'sync': cmd_sync, 'status': cmd_status, 'site': cmd_site, 'open': cmd_open, 'ingest': cmd_ingest}[args.cmd](cfg, args)
+    {'add': cmd_add, 'sync': cmd_sync, 'status': cmd_status, 'diagnose': cmd_diagnose, 'site': cmd_site, 'open': cmd_open, 'ingest': cmd_ingest}[args.cmd](cfg, args)
 
 
 if __name__ == '__main__':

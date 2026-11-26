@@ -113,5 +113,81 @@ with tempfile.TemporaryDirectory() as ws:
     check('예약 웹 → 예약 서버 (주로 부르는 서버로 판단)', 'GET /api/orders/{order_id}' in http.get(('booking-web', 'booking-server'), []) and ('booking-web', 'order-service') not in http, sorted(http))
     check('판단 근거가 실행 결과에 나온다', '주로 부르는 서버(추정) 2' in out, out[-500:])
 
+def web(folder, name, body):
+    os.makedirs(os.path.join(folder, name, 'src'))
+    open(os.path.join(folder, name, 'package.json'), 'w').write('{"name": "%s", "dependencies": {"react": "18.3.1"}}' % name)
+    open(os.path.join(folder, name, 'src', 'api.ts'), 'w', encoding='utf-8').write(body)
+
+
+with tempfile.TemporaryDirectory() as ws, tempfile.TemporaryDirectory() as src:
+    print('6) 연결 진단과 접두어 맞춤')
+    # 게이트웨이가 경로 앞에 /gw 를 붙인다: 호출이 API 보다 길다
+    web(src, 'gw-web', """
+export const a = (id: number) => fetch(`/gw/api/orders/${id}`);
+export const b = () => fetch('/gw/api/orders', { method: 'POST' });
+export const c = (id: number) => fetch(`/gw/api/orders/${id}/cancel`, { method: 'POST' });
+""")
+    # 기준 주소에 /api 가 들어 있다: 호출이 API 보다 짧다
+    web(src, 'short-web', """
+import axios from 'axios';
+const api = axios.create({ baseURL: process.env.API });
+export const a = (id: number) => api.get(`/orders/${id}`);
+export const b = () => api.post('/orders');
+export const c = (id: number) => api.post(`/orders/${id}/cancel`);
+""")
+    # 어느 API 와도 맞지 않는다
+    web(src, 'lost-web', """
+import axios from 'axios';
+export const a = () => axios.get('/v9/alpha/list');
+export const b = () => axios.get('/v9/beta/list');
+export const c = () => axios.post('/v9/gamma/save');
+""")
+    # 조각 하나짜리 경로들: /payments/{id} 처럼 무엇이든 받는 라우트에 접두어를 붙여 맞춰서는 안 된다
+    web(src, 'junk-web', """
+import axios from 'axios';
+export const a = () => axios.get('/aaa');
+export const b = () => axios.get('/bbb');
+export const c = () => axios.get('/ccc');
+""")
+    # 서버 주소는 적혀 있는데 호출 방식을 읽지 못하는 앱
+    os.makedirs(os.path.join(src, 'quiet-app', 'src', 'main', 'kotlin', 'quiet'))
+    open(os.path.join(src, 'quiet-app', 'build.gradle.kts'), 'w').write('')
+    open(os.path.join(src, 'quiet-app', 'src', 'main', 'kotlin', 'quiet', 'Net.kt'), 'w', encoding='utf-8').write(
+        'package quiet\n\nclass Net {\n    val base = "https://api.shop.example"\n    fun orders() = Request.Builder().url(base + path()).build()\n    fun path() = listOf("orders").joinToString("/")\n}\n')
+    cfg = os.path.join(ws, 'atlas.config.json')
+    atlas(cfg, 'init', 'link-check-diag')
+    atlas(cfg, 'add', os.path.join(REPO, 'fixtures', 'shop', 'order-service'))
+    atlas(cfg, 'add', os.path.join(REPO, 'fixtures', 'shop', 'payment-service'))
+    for name in ('gw-web', 'short-web', 'lost-web', 'junk-web', 'quiet-app'):
+        atlas(cfg, 'add', os.path.join(src, name))
+    out = atlas(cfg, 'sync')
+    meta, units, http = load(ws)
+    diag = json.load(open(os.path.join(ws, 'atlas-manifest.json'), encoding='utf-8'))['summary']['diag']
+    by = {x['id']: x for x in diag['systems']}
+    pf = {(p['frm'], p['kind'], p['prefix']): p['n'] for p in diag['prefixes']}
+    check('호출 앞에 붙은 접두어를 떼고 잇는다 (/gw)', len(http.get(('gw-web', 'order-service'), [])) == 3 and pf.get(('gw-web', 'strip', '/gw')) == 3, (http.get(('gw-web', 'order-service')), pf))
+    check('호출에 빠진 접두어를 붙여 잇는다 (/api)', len(http.get(('short-web', 'order-service'), [])) == 3 and pf.get(('short-web', 'add', '/api')) == 3, (http.get(('short-web', 'order-service')), pf))
+    check('맞지 않는 호출은 잇지 않고 진단에 남긴다', not any(a == 'lost-web' for a, _ in http) and by['lost-web']['calls'] == 3 and by['lost-web']['linked'] == 0 and by['lost-web']['unmatched'] == 3
+          and 'GET /v9/alpha/list' in by['lost-web']['call_ex'], by.get('lost-web'))
+    check('무엇이든 받는 라우트에는 접두어를 붙여 맞추지 않는다', not any(a == 'junk-web' for a, _ in http) and not any(p['frm'] == 'junk-web' for p in diag['prefixes']), ([k for k in http if k[0] == 'junk-web'], diag['prefixes']))
+    check('주소는 적혀 있는데 호출이 안 잡힌 앱을 알린다', by['quiet-app']['calls'] == 0 and by['quiet-app']['hosts'] == 1 and '호출 방식을 아직 읽지 못하는 것으로 보입니다' in out, (by.get('quiet-app'), out[-600:]))
+    check('시스템별 집계가 맞다', by['order-service']['routes'] == 3 and by['gw-web']['linked'] == 3 and by['short-web']['linked'] == 3, by)
+    check('실행 결과에 진단이 나온다', '연결 진단' in out and '어느 API 와도 경로가 맞지 않습니다' in out and '/gw 를 떼면' in out, out[-700:])
+    full = atlas(cfg, 'diagnose')
+    check('diagnose 명령이 같은 내용을 보여 준다', '못 이은 호출 예' in full and 'API 예' in full, full[-400:])
+
+with tempfile.TemporaryDirectory() as ws, tempfile.TemporaryDirectory() as src:
+    web(src, 'only-web', """
+import axios from 'axios';
+export const a = () => axios.get('/api/one');
+export const b = () => axios.get('/api/two');
+export const c = () => axios.get('/api/three');
+""")
+    cfg = os.path.join(ws, 'atlas.config.json')
+    atlas(cfg, 'init', 'link-check-noroutes')
+    atlas(cfg, 'add', os.path.join(src, 'only-web'))
+    out = atlas(cfg, 'sync')
+    check('서버 API 를 하나도 못 읽으면 그렇게 알린다', '서버가 내주는 API 를 하나도 읽지 못했습니다' in out, out[-500:])
+
 print('실패 %d건: %s' % (len(fails), ', '.join(fails)) if fails else '통과')
 sys.exit(1 if fails else 0)

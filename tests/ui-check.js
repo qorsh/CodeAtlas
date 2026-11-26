@@ -118,6 +118,7 @@ setTimeout(() => { console.log(out.join('\n')); console.log('시간 초과'); do
   const c0 = await text('#cfg');
   ok('설정 패널이 열리고 폴더·시스템이 보인다', await ev(`!document.querySelector('#cfg').hidden`) && c0.includes('fixtures/shop') && c0.includes('order-service'), c0.slice(0, 300));
   ok('지도에 없는 주소가 레거시 후보로 보인다', c0.includes('erp.legacy.example') && c0.includes('레거시로 등록'));
+  ok('연결 진단이 보인다', c0.includes('연결 진단') && c0.includes('눈에 띄는 문제 없음') && /부르는 호출 \d+개 중 이어진 것 \d+개/.test(c0), c0.slice(0, 400));
   await tap('#cfg [data-c="ext-from"]'); await sleep(300);
   ok('레거시로 등록을 누르면 주소가 채워진다', await ev(`document.querySelector('#x-hosts').value`) === 'erp.legacy.example');
   await ev(`document.querySelector('#x-name').focus()`); await send('Input.insertText', {text:'레거시 ERP'});
