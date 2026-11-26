@@ -1004,21 +1004,22 @@ def unread_patterns(cfg, raw, diag, routes=()):
     apps = {s['id'] for s in cfg['systems'] if any(r.startswith('client-') for r in s.get('rules') or [])}
     served = {x['id'] for x in diag['systems'] if x['routes']}
     out = []
-    for sid, kind, name, argi, n, ex in raw:
+    for sid, kind, name, argi, n, ex, *more in raw:
+        beside = more[0] if more else []
         if n < 3:
             continue
         if sum(1 for v in ex if match_route(routes, None, norm_path(v))) * 2 >= len(ex):      # 그 문자열들이 이미 있는 API 와 같다: 다른 방법(경로 문자열 그물 등)으로 이어진 꼴이라 알릴 것이 없다
             continue
         ex = ex[:3]
         hint = 'consume' if sid in apps else 'provide' if kind == 'ann' or sid in served and re.search(r'(?i)(rout|mapping|handle|register|endpoint|path)', name) else 'consume'
-        out.append(dict(sys=sid, kind=kind, name=name, argi=argi, n=n, ex=ex, hint=hint))
+        out.append(dict(sys=sid, kind=kind, name=name, argi=argi, n=n, ex=ex, hint=hint, beside=[[b, k] for b, k in beside]))
     return sorted(out, key=lambda x: -x['n'])[:24]
 
 
 def custom_rule(sid, kind, name, argi, role):
     """읽지 못한 꼴 하나를 규칙으로. 그 꼴이 나온 시스템에만 걸리게 systems 로 좁힌다."""
     slug = re.sub(r'[^A-Za-z0-9]+', '-', name).strip('-')
-    base = dict(id=f"{sid}-{kind}-{slug}-{role}", kind='http', role=role, systems=[sid], made=dict(sys=sid, kind=kind, name=name, argi=argi))
+    base = dict(id=f"{sid}-{kind}-{slug}-{role}", kind='http', role=role, systems=[sid], unread_only=True, made=dict(sys=sid, kind=kind, name=name, argi=argi))
     if kind == 'ann':            # 어노테이션에 경로가 적힌 꼴. 클래스에 같은 어노테이션이 있으면 접두 경로로 본다
         return dict(base, type='annotation', names={name: '*'}, require_path=True, prefix=dict(names=[name]), unit_kind='controller' if role == 'provide' else 'client')
     last = name.split('.')[-1]
@@ -1075,8 +1076,8 @@ def diag_findings(summary, names):
 
 
 def print_diag(summary, names, full=False):
-    d, finds = summary.get('diag') or {}, diag_findings(summary, names)
-    if not d.get('systems') or not (full or finds):
+    d, finds, un = summary.get('diag') or {}, diag_findings(summary, names), summary.get('unread') or []
+    if not d.get('systems') or not (full or finds or un):
         return
     print('연결 진단')
     flagged = {sid for _, sid, _ in finds}
@@ -1096,12 +1097,11 @@ def print_diag(summary, names, full=False):
         print('  → ' + text)
     if any(k in ('no-routes', 'silent') for k, _, _ in finds):
         print('  ' + READS)
-    un = summary.get('unread') or []
-    if un and (full or finds):
+    if un:
         print('읽지 못한 꼴  (경로처럼 생긴 문자열이 놓여 있지만 어느 규칙도 읽지 않은 자리)')
         for x in un[:12]:
             what = f"어노테이션 @{x['name']}" if x['kind'] == 'ann' else f"호출 {x['name']}(…)" + (f" {x['argi'] + 1}번째 인자" if x['argi'] else '')
-            print(f"  {names.get(x['sys'], x['sys'])}: {what} · {x['n']}개 · 예: {', '.join(x['ex'])}")
+            print(f"  {names.get(x['sys'], x['sys'])}: {what} · {x['n']}개 · 예: {', '.join(x['ex'])}" + (' · 함께 붙은 것: ' + ', '.join(f'@{b} {k}' for b, k in x['beside']) if x.get('beside') else ''))
         print('  설정 패널의 연결 진단에서 꼴을 골라 "API 정의로 읽기"나 "API 호출로 읽기"를 누르면 규칙이 만들어집니다.')
 
 

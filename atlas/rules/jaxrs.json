@@ -1,6 +1,6 @@
 {
   "id": "jaxrs",
-  "title": "JAX-RS 리소스 (@Path 클래스 + @GET·@POST … 메서드)",
+  "title": "JAX-RS 리소스 (@GET·@POST … 메서드 + @Path. 클래스에 @Path 가 없어도 메서드에 있으면 읽는다)",
   "langs": [
     "java",
     "kotlin"
@@ -25,10 +25,10 @@
       "prefix": {
         "names": [
           "Path"
-        ],
-        "required": true
+        ]
       },
-      "unit_kind": "controller"
+      "unit_kind": "controller",
+      "require": "path-or-prefix"
     }
   ]
 }

@@ -67,6 +67,8 @@ with tempfile.TemporaryDirectory() as ws:
     check('관리자 화면은 어느 서버에도 붙지 않는다', not any(a == 'backoffice' for a, _ in http), [k for k in http if k[0] == 'backoffice'])
     pend = [p for p in meta.get('pending', []) if units[p['u']]['sys'] == 'backoffice']
     check('관리자 화면의 호출이 확인 필요로 남는다', len(pend) == 1 and sorted(c[0] for c in pend[0]['cands']) == ['booking-server', 'order-service'], meta.get('pending'))
+    by1 = {x['id']: x for x in json.load(open(os.path.join(ws, 'atlas-manifest.json'), encoding='utf-8'))['summary']['diag']['systems']}
+    check('Retrofit 인터페이스(앱)를 API 를 내주는 쪽으로 잘못 읽지 않는다', by1['mobile']['routes'] == 0 and by1['mobile']['linked'] >= 2, by1.get('mobile'))
     check('결제 서버는 하나이고 두 제품이 부른다', ('order-service', 'payment-service') in http and ('booking-server', 'payment-service') in http
           and sum(1 for s in meta['systems'] if s['id'].endswith('payment-service')) == 1)
     off = {o['host']: o for o in meta.get('offmap', [])}
@@ -320,6 +322,58 @@ public class MainResource {
     public String index() { return ""; }
 }
 """)
+    # 클래스에 @Path 가 없고 메서드에만 있는 꼴 (기준 경로를 설정 파일에서 정하는 서버)
+    put(os.path.join(src, 'main-api', 'src', 'main', 'java', 'demo', 'NoticeResource.java'), """package demo;
+
+import javax.ws.rs.POST;
+import javax.ws.rs.Path;
+import javax.ws.rs.Produces;
+import javax.ws.rs.core.MediaType;
+
+public class NoticeResource {
+    @POST
+    @Path("/notice/list")
+    @Produces({ MediaType.APPLICATION_JSON })
+    public String list() { return ""; }
+}
+""")
+    # HTTP 메서드 어노테이션 없이 @Path 만 쓴 꼴: 기본 규칙은 읽지 않고, 읽지 못한 꼴로 알려야 한다
+    put(os.path.join(src, 'main-api', 'src', 'main', 'java', 'demo', 'ReportResource.java'), """package demo;
+
+import javax.ws.rs.Path;
+import javax.ws.rs.Produces;
+
+@Path("/report")
+public class ReportResource {
+    @Path("/daily")
+    @Produces("application/json")
+    public String daily() { return ""; }
+
+    @Path("/weekly")
+    @Produces("application/json")
+    public String weekly() { return ""; }
+
+    @Path("/monthly")
+    @Produces("application/json")
+    public String monthly() { return ""; }
+}
+""")
+    # 경로가 아닌데 슬래시가 든 문자열: 읽지 못한 꼴에 올라오면 안 된다
+    put(os.path.join(src, 'main-api', 'src', 'main', 'java', 'demo', 'Misc.java'), """package demo;
+
+import java.net.URL;
+
+public class Misc {
+    @Headers("Content-Type:application/json")
+    public void a() throws Exception { new URL("file:/C:/work/tmp/a.wsdl"); Text.bind("txt:가/나"); }
+
+    @Headers("Content-Type:application/json")
+    public void b() throws Exception { new URL("file:/C:/work/tmp/b.wsdl"); Text.bind("txt:다/라"); }
+
+    @Headers("Content-Type:application/json")
+    public void c() throws Exception { new URL("file:/C:/work/tmp/c.wsdl"); Text.bind("txt:A/B"); }
+}
+""")
     put(os.path.join(src, 'push-api', 'pom.xml'), '<project/>')
     put(os.path.join(src, 'push-api', 'src', 'main', 'java', 'demo', 'PushHandlers.java'), """package demo;
 
@@ -353,7 +407,12 @@ export const f = () => fetch('/push/read');
     un = {(x['sys'], x['kind'], x['name']): x for x in summary.get('unread', [])}
     x = un.get(('push-api', 'ann', 'Endpoint'))
     check('규칙이 없는 어노테이션을 읽지 못한 꼴로 찾아낸다', bool(x) and x['n'] == 3 and x['hint'] == 'provide' and '/push/list' in x['ex'] and ('portal', 'push-api') not in http, summary.get('unread'))
-    check('이미 읽은 것은 읽지 못한 꼴에 넣지 않는다', not any(k[2] in ('Path', 'GET', 'POST', 'fetch') for k in un), list(un))
+    routes = sorted(m['route'] for u in units if u['sys'] == 'main-api' for m in u.get('m', []) if m.get('route'))
+    check('JAX-RS: 클래스에 @Path 가 없어도 메서드의 @POST·@Path 로 읽는다', 'POST /notice/list' in routes, routes)
+    rp = un.get(('main-api', 'ann', 'Path'))
+    check('@Path 만 있고 HTTP 메서드 어노테이션이 없는 꼴은 읽지 못한 꼴로 알린다', bool(rp) and rp['n'] == 3 and dict(rp['beside']).get('Produces') == 3 and not any('/report' in r for r in routes), (rp, routes))
+    check('이미 읽은 것은 읽지 못한 꼴에 넣지 않는다', not any(k[2] in ('GET', 'POST', 'fetch') for k in un), list(un))
+    check('경로가 아닌 문자열(헤더, 파일 주소, 한글 문구)은 읽지 못한 꼴에 넣지 않는다', not any(k[2] in ('Headers', 'URL', 'Text.bind') for k in un), list(un))
     check('diagnose 가 읽지 못한 꼴을 보여 준다', '읽지 못한 꼴' in atlas(cfg, 'diagnose') and '어노테이션 @Endpoint' in atlas(cfg, 'diagnose'))
 
 print('실패 %d건: %s' % (len(fails), ', '.join(fails)) if fails else '통과')

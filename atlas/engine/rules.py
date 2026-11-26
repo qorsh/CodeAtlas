@@ -85,7 +85,7 @@ def _join(prefix, path):
 
 def rule_annotation(R, rid, i, u, fi, items):
     names, rx = R.get('names', {}), re.compile(R['match']) if R.get('match') else None
-    prefix, P = '', R.get('prefix')
+    prefix, P, hit = '', R.get('prefix'), []
     if P:
         hit = [an for an in u.get('anns', []) if an['name'].split('.')[-1] in P['names']]
         if not hit and P.get('required'):
@@ -108,7 +108,7 @@ def rule_annotation(R, rid, i, u, fi, items):
             elif rx:
                 mm = rx.search(an['name'])
                 method = _sub(R.get('method', '$1'), mm).upper() if mm else None
-            if not method:
+            if not method or (R.get('unread_only') and an.get('_used')):       # unread_only: 다른 규칙이 이미 읽은 자리는 건드리지 않는다(화면에서 만든 규칙)
                 continue
             methods = [method]
             if method == '*':      # 메서드가 인자로 주어지는 꼴: methods=["POST"], method = RequestMethod.POST
@@ -122,6 +122,8 @@ def rule_annotation(R, rid, i, u, fi, items):
                     if o['name'].split('.')[-1] in R['path_from']:
                         o['_used'] = 1
             if R.get('require_path') and not paths:
+                continue
+            if R.get('require') == 'path-or-prefix' and not paths and not hit:       # 경로가 메서드에도 클래스에도 없으면 이 규칙이 읽을 것이 아니다 (같은 이름의 어노테이션을 쓰는 다른 라이브러리)
                 continue
             an['_used'] = 1
             for method in methods:
@@ -214,7 +216,7 @@ def rule_call(R, rid, i, u, fi, items):
             continue
         mm = rx.search(sc['chain'])
         lit = lead_base(sc['lit'], NS[u['sys']]) if http and mm else sc['lit']
-        if not mm or (R.get('lit') and not re.search(R['lit'], lit)):
+        if not mm or (R.get('lit') and not re.search(R['lit'], lit)) or (R.get('unread_only') and sc.get('_used')):
             continue
         if sc.get('wrap') and not R.get('allow_wrap', True):
             continue
@@ -319,7 +321,7 @@ _KOTLIN_URL = re.compile(r'(?:\b(?P<fn>fetch|get|post|request)\(\s*"(?P<arg>[a-z
 
 _CLIENTISH = re.compile(r'(?i)(api|client|http|rest|remote|network|service|server|request|retrofit|session|gateway)')
 _MIME = re.compile(r'^(application|text|image|audio|video|multipart|font|message|model)/')
-_REL_PATH = re.compile(r'^[A-Za-z][\w\-]*(?:/[\w\-.{}$()\\:]+)+/?$')            # api/orders/{id} · am/menu/list.do 처럼 슬래시 없이 시작하는 경로
+_REL_PATH = re.compile(r'^[A-Za-z][\w\-]*(?:/[\w\-.{}$()\\:]+)+/?$', re.ASCII)  # api/orders/{id} · am/menu/list.do 처럼 슬래시 없이 시작하는 경로 (영문만)
 _URL_PATH = re.compile(r'^https?://[A-Za-z0-9.\-]+(?::\d{2,5})?/[^\s]+$')
 
 
@@ -429,8 +431,8 @@ for i, u in enumerate(units):
 # ───────────────────────────── 읽지 못한 꼴 ─────────────────────────────
 # 경로처럼 생긴 문자열이 어노테이션 인자나 호출 인자로 놓여 있는데 어느 규칙도 읽지 않은 자리를 꼴별로 센다.
 # 규칙이 없는 프레임워크를 쓴 코드가 어디에 어떤 모양으로 있는지 드러내려는 것이고, 화면에서 그 꼴을 골라 규칙으로 만들 수 있다.
-_PATHY = re.compile(r'^(?:/[A-Za-z_{:][\w\-{}:.$*]*(?:/[\w\-{}:.$*]*)*|[A-Za-z_{:][\w\-{}:.$*]*(?:/[\w\-{}:.$*]+)+)/?$')
-_NOT_API = re.compile(r'\.(jsp|html?|png|jpe?g|gif|svg|ico|css|js|xml|properties|txt|ya?ml|sql|jar|class|ttf|woff2?|mp[34]|pdf|xlsx?|zip)$', re.I)
+_PATHY = re.compile(r'^(?:/[A-Za-z_{:][\w\-{}:.$*]*(?:/[\w\-{}:.$*]*)*|[A-Za-z_{][\w\-{}.$*]*(?:/[\w\-{}:.$*]+)+)/?$', re.ASCII)     # 영문 경로만. 첫 조각에 ':' 가 있으면(Content-Type:… · file:/… · txt:…) 경로가 아니다
+_NOT_API = re.compile(r'\.(jsp|html?|png|jpe?g|gif|svg|ico|css|js|xml|properties|txt|ya?ml|sql|jar|class|ttf|woff2?|mp[34]|pdf|xlsx?|zip|wsdl|xsd|tmp|log|dat|db|so|dll|exe)$', re.I)
 _NOISE_CALL = re.compile(r'(?i)^(equals\w*|contains|startsWith|endsWith|replace\w*|split|matches|indexOf|lastIndexOf|format|append|compile|print\w*|log|debug|info|warn|error|trace|[deiwv]|'
                          r'File|Paths?|getResource\w*|FileInputStream|FileReader|FileWriter|readFile\w*|require|loadLibrary|ModelAndView|forward|sendRedirect|getRequestDispatcher|include|'
                          r'Intent|valueOf|join|trim|asList|assert\w*|expect|describe|it|test|getString|getProperty|getenv|getParameter|getHeader|getAttribute|setAttribute|addObject|addAttribute|'
@@ -441,14 +443,16 @@ def _pathy(v):
     return 2 <= len(v) <= 120 and _PATHY.match(v) and not _MIME.match(v) and not _NOT_API.search(v)
 
 
-unread = {}        # (시스템, 'ann'|'call', 이름, 인자 번호) → [개수, 문자열 표본]
+unread = {}        # (시스템, 'ann'|'call', 이름, 인자 번호) → [개수, 문자열 표본, {함께 붙은 어노테이션: 횟수}]
 
 
-def _unread(sys_id, kind, name, argi, value):
-    t = unread.setdefault((sys_id, kind, name, argi), [0, []])
+def _unread(sys_id, kind, name, argi, value, beside=()):
+    t = unread.setdefault((sys_id, kind, name, argi), [0, [], {}])
     t[0] += 1
     if value not in t[1] and len(t[1]) < 40:        # 표본: 연결 단계가 '이미 다른 방법으로 이어진 꼴인가'를 가릴 때 쓴다
         t[1].append(value)
+    for b in set(beside):                           # 같은 선언에 함께 붙은 어노테이션 이름: 어떤 방식인지 짐작하는 단서 (@POST 가 같이 있는가 등)
+        t[2][b] = t[2].get(b, 0) + 1
 
 
 for u in units:
@@ -456,12 +460,13 @@ for u in units:
         continue
     all_anns = [x for m in u['members'] for x in m.get('anns', [])] + list(u.get('anns', []))
     in_ann = lambda q: any(an['span'][0] <= q < an['span'][1] for an in all_anns)       # 어노테이션 인자 안의 문자열은 어노테이션 꼴로만 센다
-    for an in all_anns:
-        if an.get('_used'):
-            continue
-        for v in an['pos'] + [x for k in ('value', 'path', 'url', 'uri') for x in an['kw'].get(k, [])]:
-            if _pathy(v):
-                _unread(u['sys'], 'ann', an['name'].split('.')[-1], 0, v)
+    for group in [m.get('anns', []) for m in u['members']] + [u.get('anns', [])]:
+        for an in group:
+            if an.get('_used'):
+                continue
+            for v in an['pos'] + [x for k in ('value', 'path', 'url', 'uri') for x in an['kw'].get(k, [])]:
+                if _pathy(v):
+                    _unread(u['sys'], 'ann', an['name'].split('.')[-1], 0, v, [o['name'].split('.')[-1] for o in group if o is not an])
     for sc in u.get('scalls', []):
         if sc.get('_used') or not sc['chain'] or sc['kw'] or not _pathy(sc['lit']) or in_ann(sc['q']):
             continue
