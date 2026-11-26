@@ -63,6 +63,7 @@ with tempfile.TemporaryDirectory() as ws:
     check('쇼핑 웹은 예약 서버에 붙지 않는다', ('web', 'booking-server') not in http)
     check('예약 웹 → 예약 서버 (겹치는 경로 포함)', 'GET /api/orders/{order_id}' in http.get(('booking-web', 'booking-server'), []), http.get(('booking-web', 'booking-server')))
     check('예약 웹은 주문 서버에 붙지 않는다', ('booking-web', 'order-service') not in http)
+    check('주소를 고르는 식으로 시작하는 호출도 잡는다 (`${base()}/…`)', 'DELETE /api/bookings/{booking_id}' in http.get(('booking-web', 'booking-server'), []), http.get(('booking-web', 'booking-server')))
     check('관리자 화면은 어느 서버에도 붙지 않는다', not any(a == 'backoffice' for a, _ in http), [k for k in http if k[0] == 'backoffice'])
     pend = [p for p in meta.get('pending', []) if units[p['u']]['sys'] == 'backoffice']
     check('관리자 화면의 호출이 확인 필요로 남는다', len(pend) == 1 and sorted(c[0] for c in pend[0]['cands']) == ['booking-server', 'order-service'], meta.get('pending'))
@@ -90,12 +91,15 @@ with tempfile.TemporaryDirectory() as ws:
     meta, units, http = load(ws)
     check('관리자 화면 → 주문 서버 (예약 서버를 뺐으므로)', ('backoffice', 'order-service') in http and ('backoffice', 'booking-server') not in http, [k for k in http if k[0] == 'backoffice'])
 
-    print('4) 서버 주소 지정')
-    edit(cfg, lambda d: (d['link'].update(never={}), [s.update(hosts=['payment-service']) for s in d['systems'] if s['id'] == 'payment-service']))
-    atlas(cfg, 'sync')
+    print('4) 서버 주소 지정: 개발·운영 서버는 코드가 같고 주소만 다르다')
+    edit(cfg, lambda d: (d['link'].update(never={}), [s.update(hosts=['payment-service']) for s in d['systems'] if s['id'] == 'payment-service'],
+                         [s.update(hosts=['api.booking.example', 'dev-api.booking.example']) for s in d['systems'] if s['id'] == 'booking-server']))
+    out = atlas(cfg, 'sync')
     meta, units, http = load(ws)
     seen = {h['host']: h for h in meta.get('hosts_seen', [])}
     check('주소의 주인이 표시된다 (포트가 달라도)', seen.get('payment-service:8000', {}).get('owner') == 'payment-service', seen)
+    check('개발 주소와 운영 주소가 같은 서버 하나를 가리킨다', seen.get('dev-api.booking.example', {}).get('owner') == 'booking-server' and seen.get('api.booking.example', {}).get('owner') == 'booking-server'
+          and sum(1 for s in meta['systems'] if s['id'] == 'booking-server') == 1, seen)
 
 with tempfile.TemporaryDirectory() as ws:
     print('5) 웹과 서버가 저마다 다른 폴더(저장소)일 때')

@@ -182,7 +182,7 @@ for _u in units:
         _const_files.add(_u['file'])
         for _m in _URL_CONST.finditer(file_info[_u['file']]['src']):
             URL_CONSTS.setdefault(NS[_u['sys']], {}).setdefault(_m.group(1), set()).add((_m.group(2) + (_m.group(3) or '')).rstrip('/'))
-_LEAD = re.compile(r'^(?:\$\{\s*([A-Za-z_][\w.]*)\s*\}|\{\s*([A-Za-z_][\w.]*)\s*\}|\$([A-Za-z_]\w*)|\\\(\s*([A-Za-z_][\w.]*)\s*\))(?=/)')
+_LEAD = re.compile(r'^(?:\$\{([^{}]*)\}|\{([^{}]*)\}|\$([A-Za-z_]\w*)|\\\(([^()]*(?:\([^()]*\))?[^()]*)\))(?=/)')       # 맨 앞의 ${…} · {…} · $이름 · \\(…). 안에는 이름뿐 아니라 base() 같은 식도 온다
 
 
 def const_url(name, ns):
@@ -192,11 +192,13 @@ def const_url(name, ns):
 
 def lead_base(lit, ns):
     """문자열 맨 앞이 기준 주소 변수(`${API}/x` · `{ERP_BASE}/x` · `$BASE_URL/x`)이면, 그 이름의 주소 상수가 하나일 때 주소로 바꾸고 아니면 떼어 낸다.
+    `${base()}/x` 처럼 환경에 따라 주소를 고르는 식이 와도 떼어 내고 경로를 살린다(개발·운영 주소가 따로 있는 코드에서 흔한 꼴).
     주소가 붙으면 어느 서버로 가는 호출인지 연결 단계에서 가릴 수 있다."""
     m = _LEAD.match(lit)
     if not m:
         return lit
-    return const_url(next(g for g in m.groups() if g), ns) + lit[m.end():]
+    name = re.match(r'\s*((?:[A-Za-z_]\w*\.)*[A-Za-z_]\w*)\s*$', next((g for g in m.groups() if g), ''))      # 이름 하나일 때만 상수로 본다. base() 같은 식이면 떼어 내기만 한다
+    return (const_url(name.group(1), ns) if name else '') + lit[m.end():]
 
 
 def rule_call(R, rid, i, u, fi, items):
