@@ -228,14 +228,14 @@ public class BoardApi {
     static final String URL_LOGIN = "/user/loginAction.do";
 
     String listUrl(Map<String, String> params) {
-        String menuId = params.get("menuId");
-        String sysId = params.get("sysId");
-        String deptId = params.get("deptId");
-        return SERVER_URL + "/board/listData.do?menuId=" + menuId + "&sysId=" + sysId + "&deptId=" + deptId;
+        String page = params.get("page");
+        String size = params.get("size");
+        String keyword = params.get("keyword");
+        return SERVER_URL + "/board/listData.do?page=" + page + "&size=" + size + "&keyword=" + keyword;
     }
 
     String viewUrl(Map<String, String> params) {
-        return SERVER_URL + "/board/viewData.do" + "?docId=" + params.get("docId");
+        return SERVER_URL + "/board/viewData.do" + "?id=" + params.get("id");
     }
 
     String loginUrl() { return SERVER_URL + URL_LOGIN; }
@@ -273,7 +273,7 @@ final class BoardAPI {
     meta, units, http = load(ws)
     by = {x['id']: x for x in json.load(open(os.path.join(ws, 'atlas-manifest.json'), encoding='utf-8'))['summary']['diag']['systems']}
     check('Android: 주소에 더해 쓰는 경로와 상수에 둔 경로가 서버 API 에 이어진다', sorted(http.get(('android', 'server'), [])) == ['ALL /board/listData.do', 'ALL /board/viewData.do', 'ALL /user/loginAction.do'], http.get(('android', 'server')))
-    check('Android: map.get("menuId") 같은 것은 호출로 세지 않는다', by['android']['calls'] == 3 and by['android']['unmatched'] == 0, by.get('android'))
+    check('Android: map.get("page") 같은 것은 호출로 세지 않는다', by['android']['calls'] == 3 and by['android']['unmatched'] == 0, by.get('android'))
     check('iOS: 상수에 모아 둔 경로(슬래시 없이 시작하는 것 포함)가 서버 API 에 이어진다', sorted(http.get(('ios', 'server'), [])) == ['ALL /board/listData.do', 'ALL /board/saveAction.do', 'ALL /user/loginAction.do'], http.get(('ios', 'server')))
     check('진단에 문제가 없다고 나온다', '연결 진단' not in out, out[-500:])
     # 예전에 등록된 앱(그물이 꺼져 있던 설정)도 다음 분석 때 켜진다
@@ -296,6 +296,65 @@ with tempfile.TemporaryDirectory() as ws, tempfile.TemporaryDirectory() as src:
     check('앱의 경로가 서버에 없으면 경로 문자열의 예를 보여 준다', '경로로 보이는 문자열이 3개 있지만 어느 API 와도 맞지 않습니다' in out and '/mobile/main.do' in out, out[-700:])
     finds = {f['id']: f['kind'] for f in json.load(open(os.path.join(ws, 'atlas-manifest.json'), encoding='utf-8'))['summary']['findings']}
     check('요청을 처리하는 곳은 있는데 부르는 곳이 없는 서버를 알린다', finds.get('server') == 'no-callers' and finds.get('ios') == 'maybe' and 'API 3개를 내주는데 부르는 곳을 하나도 찾지 못했습니다' in out, (finds, out[-500:]))
+
+with tempfile.TemporaryDirectory() as ws, tempfile.TemporaryDirectory() as src:
+    print('8) JAX-RS 서버, 그리고 규칙이 없는 방식으로 쓴 서버')
+    put(os.path.join(src, 'main-api', 'pom.xml'), '<project/>')
+    put(os.path.join(src, 'main-api', 'src', 'main', 'java', 'demo', 'MainResource.java'), """package demo;
+
+import javax.ws.rs.GET;
+import javax.ws.rs.POST;
+import javax.ws.rs.Path;
+
+@Path("/main")
+public class MainResource {
+    @POST
+    @Path("/items")
+    public String items() { return ""; }
+
+    @GET
+    @Path("/logout")
+    public String logout() { return ""; }
+
+    @GET
+    public String index() { return ""; }
+}
+""")
+    put(os.path.join(src, 'push-api', 'pom.xml'), '<project/>')
+    put(os.path.join(src, 'push-api', 'src', 'main', 'java', 'demo', 'PushHandlers.java'), """package demo;
+
+public class PushHandlers {
+    @Endpoint("/push/list")
+    public String list() { return ""; }
+
+    @Endpoint("/push/send")
+    public String send() { return ""; }
+
+    @Endpoint("/push/read")
+    public String read() { return ""; }
+}
+""")
+    web(src, 'portal', """
+export const a = () => fetch('/ctx/main/items', { method: 'POST' });
+export const b = () => fetch('/ctx/main/logout');
+export const c = () => fetch('/ctx/main');
+export const d = () => fetch('/push/list');
+export const e = () => fetch('/push/send', { method: 'POST' });
+export const f = () => fetch('/push/read');
+""")
+    cfg = os.path.join(ws, 'atlas.config.json')
+    atlas(cfg, 'init', 'link-check-unread')
+    for name in ('main-api', 'push-api', 'portal'):
+        atlas(cfg, 'add', os.path.join(src, name))
+    out = atlas(cfg, 'sync')
+    meta, units, http = load(ws)
+    summary = json.load(open(os.path.join(ws, 'atlas-manifest.json'), encoding='utf-8'))['summary']
+    check('JAX-RS: 클래스의 @Path 와 메서드의 @GET·@POST·@Path 를 읽는다', sorted(http.get(('portal', 'main-api'), [])) == ['GET /main', 'GET /main/logout', 'POST /main/items'], http.get(('portal', 'main-api')))
+    un = {(x['sys'], x['kind'], x['name']): x for x in summary.get('unread', [])}
+    x = un.get(('push-api', 'ann', 'Endpoint'))
+    check('규칙이 없는 어노테이션을 읽지 못한 꼴로 찾아낸다', bool(x) and x['n'] == 3 and x['hint'] == 'provide' and '/push/list' in x['ex'] and ('portal', 'push-api') not in http, summary.get('unread'))
+    check('이미 읽은 것은 읽지 못한 꼴에 넣지 않는다', not any(k[2] in ('Path', 'GET', 'POST', 'fetch') for k in un), list(un))
+    check('diagnose 가 읽지 못한 꼴을 보여 준다', '읽지 못한 꼴' in atlas(cfg, 'diagnose') and '어노테이션 @Endpoint' in atlas(cfg, 'diagnose'))
 
 print('실패 %d건: %s' % (len(fails), ', '.join(fails)) if fails else '통과')
 sys.exit(1 if fails else 0)

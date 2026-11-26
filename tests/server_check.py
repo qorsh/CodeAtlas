@@ -139,6 +139,41 @@ with tempfile.TemporaryDirectory() as ws:
     st = req('api/state')[1]
     check('상태에 요약과 레거시 호출 수가 나온다', st['summary'].get('external', {}).get('erp', {}).get('calls') == 4 and len(st['sources']) == 3, st.get('summary'))
 
+    # 읽지 못한 꼴을 규칙으로 만들기
+    more = os.path.join(ws, 'more')
+    put(os.path.join(more, 'push-api', 'pom.xml'), '<project/>')
+    put(os.path.join(more, 'push-api', 'src', 'main', 'java', 'demo', 'PushHandlers.java'),
+        'package demo;\n\npublic class PushHandlers {\n' + ''.join(f'    @Endpoint("/push/{n}")\n    public String {n}() {{ return ""; }}\n\n' for n in ('list', 'send', 'read')) + '}\n')
+    put(os.path.join(more, 'push-web', 'package.json'), '{"name": "push-web", "dependencies": {"react": "18.3.1"}}')
+    put(os.path.join(more, 'push-web', 'src', 'api.ts'), "export const a = () => fetch('/push/list');\nexport const b = () => fetch('/push/send');\nexport const c = () => fetch('/push/read');\n")
+    for name in ('push-api', 'push-web'):
+        post('add', dict(path=os.path.join(more, name)))
+
+    def resync():
+        post('sync')
+        for _ in range(300):
+            if not post('job')[1]['running']:
+                break
+            time.sleep(0.1)
+        recs = json.load(open(os.path.join(ws, 'atlas-data.json'), encoding='utf-8'))
+        us = [r for r in recs if r['rt'] == 'unit']
+        return {(us[e['s']]['sys'], us[e['t']]['sys']) for e in recs if e['rt'] == 'edge' and e['k'] == 'http'}
+
+    http = resync()
+    st = req('api/state')[1]
+    un = [x for x in st['summary'].get('unread', []) if x['sys'] == 'push-api']
+    check('읽지 못한 꼴이 상태에 나온다', len(un) == 1 and un[0]['kind'] == 'ann' and un[0]['name'] == 'Endpoint' and ('push-web', 'push-api') not in http, st['summary'].get('unread'))
+    check('틀린 요청으로는 규칙을 만들지 않는다', post('rule', dict(sys='nope', kind='ann', name='Endpoint', role='provide'))[0] == 400 and post('rule', dict(sys='push-api', kind='ann', name='a b', role='provide'))[0] == 400)
+    code, out = post('rule', dict(sys='push-api', kind='ann', name='Endpoint', argi=0, role='provide'))
+    made = req('api/state')[1]['custom']
+    check('꼴을 골라 규칙을 만든다 (작업 공간의 rules/custom.json)', code == 200 and len(made) == 1 and made[0]['name'] == 'Endpoint' and made[0]['role'] == 'provide' and os.path.exists(os.path.join(ws, 'rules', 'custom.json')), (out, made))
+    http = resync()
+    st = req('api/state')[1]
+    check('다시 분석하면 그 꼴이 API 로 읽혀 이어지고, 읽지 못한 꼴에서 빠진다', ('push-web', 'push-api') in http and not [x for x in st['summary'].get('unread', []) if x['sys'] == 'push-api'], (sorted(http), st['summary'].get('unread')))
+    check('만든 규칙을 지운다', post('rule', dict(remove=made[0]['id']))[0] == 200 and not req('api/state')[1]['custom'] and not os.path.exists(os.path.join(ws, 'rules', 'custom.json')))
+    post('remove', dict(source='push-api'))
+    post('remove', dict(source='push-web'))
+
     code, out = post('remove', dict(source='backoffice'))
     c = atlas.load_config(cfg_path)
     check('소스 빼기: 설정에서만 빠지고 딸린 연결 지정도 정리된다', code == 200 and out['removed'] == ['backoffice'] and 'backoffice' not in c['link'].get('calls', {})

@@ -97,7 +97,7 @@ def _ann(fi, name, a, args):
                 continue
             name_kw = _kw_at(fi['code'], lo, q)
             (kw.setdefault(name_kw, []) if name_kw else pos).append(lit_text(fi, q, end))
-    return dict(name=name, a=a, pos=pos, kw=kw, raw=raw)
+    return dict(name=name, a=a, pos=pos, kw=kw, raw=raw, span=args or (a, a))
 
 
 def anns_before(fi, pos):

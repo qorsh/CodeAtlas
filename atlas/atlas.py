@@ -542,7 +542,7 @@ def link(cfg, results, sources, rules):
     sysmap = {s['id']: s for s in cfg['systems']}
     lang_of = lambda u: sysmap[u['sys']]['lang'] if u['sys'] in sysmap else '-'
     ns_of = lambda u: sysmap[u['sys']].get('ns', u['sys']) if u['sys'] in sysmap else u['sys']
-    units, edges, routes, http, dbacc, tables, others, svc, mtok, hosts = [], [], [], [], [], [], [], {}, {}, []
+    units, edges, routes, http, dbacc, tables, others, svc, mtok, hosts, unread = [], [], [], [], [], [], [], {}, {}, [], []
     for group, res in results:
         off = len(units)
         for u in res['units']:
@@ -563,6 +563,7 @@ def link(cfg, results, sources, rules):
             svc.setdefault(sid, {}).update({u + off: n for u, n in hits})
         mtok.update({int(u) + off: t for u, t in P['mtok'].items()})
         hosts += [[u + off, h] for u, h in P.get('hosts', [])]
+        unread += P.get('unread', [])
     n_code = len(units)
 
     # API: 호출 후보 ↔ 제공 라우트. 한 지도에 서버가 여럿이면 경로만으로는 대상을 정할 수 없어, 근거가 강한 순서로 가린다 (resolve_calls 설명 참고)
@@ -732,6 +733,7 @@ def link(cfg, results, sources, rules):
                    by_kind={k: sum(1 for e in edges if e['k'] == k) for k in sorted(set(e['k'] for e in edges))},
                    routes=len(routes), open_routes=len(open_routes), http_candidates=len(http),
                    resolved=api['how'], pending=len(pending), offmap=len(api['offmap']), twins=api['twins'], diag=api['diag'],
+                   unread=unread_patterns(cfg, unread, api['diag'], routes),
                    findings=[dict(kind=k, id=sid, text=t) for k, sid, t in diag_findings(dict(diag=api['diag']), {s['id']: s['name'] for s in cfg['systems']})],
                    external={x['id']: dict(calls=len(api['external'].get(x['id'], [])), name=x.get('name', x['id'])) for x in ext_cfg},
                    unmatched_db=sum(1 for x in dbacc if not any(k[1] == norm_table(x[3]) for k in table_idx)))
@@ -996,8 +998,56 @@ def detect(root, name):
     return found
 
 
+def unread_patterns(cfg, raw, diag, routes=()):
+    """엔진이 모은 '읽지 못한 꼴'을 화면에 보일 목록으로. 경로처럼 생긴 문자열이 어노테이션·호출 인자로 놓여 있는데 어느 규칙도 읽지 않은 자리다.
+    hint 는 그 꼴이 API 정의(provide)로 보이는지 호출(consume)로 보이는지에 대한 어림이다. 화면에서는 둘 다 고를 수 있다."""
+    apps = {s['id'] for s in cfg['systems'] if any(r.startswith('client-') for r in s.get('rules') or [])}
+    served = {x['id'] for x in diag['systems'] if x['routes']}
+    out = []
+    for sid, kind, name, argi, n, ex in raw:
+        if n < 3:
+            continue
+        if sum(1 for v in ex if match_route(routes, None, norm_path(v))) * 2 >= len(ex):      # 그 문자열들이 이미 있는 API 와 같다: 다른 방법(경로 문자열 그물 등)으로 이어진 꼴이라 알릴 것이 없다
+            continue
+        ex = ex[:3]
+        hint = 'consume' if sid in apps else 'provide' if kind == 'ann' or sid in served and re.search(r'(?i)(rout|mapping|handle|register|endpoint|path)', name) else 'consume'
+        out.append(dict(sys=sid, kind=kind, name=name, argi=argi, n=n, ex=ex, hint=hint))
+    return sorted(out, key=lambda x: -x['n'])[:24]
+
+
+def custom_rule(sid, kind, name, argi, role):
+    """읽지 못한 꼴 하나를 규칙으로. 그 꼴이 나온 시스템에만 걸리게 systems 로 좁힌다."""
+    slug = re.sub(r'[^A-Za-z0-9]+', '-', name).strip('-')
+    base = dict(id=f"{sid}-{kind}-{slug}-{role}", kind='http', role=role, systems=[sid], made=dict(sys=sid, kind=kind, name=name, argi=argi))
+    if kind == 'ann':            # 어노테이션에 경로가 적힌 꼴. 클래스에 같은 어노테이션이 있으면 접두 경로로 본다
+        return dict(base, type='annotation', names={name: '*'}, require_path=True, prefix=dict(names=[name]), unit_kind='controller' if role == 'provide' else 'client')
+    last = name.split('.')[-1]
+    verb = last.upper() if last.lower() in ('get', 'post', 'put', 'delete', 'patch', 'head') else None
+    rule = dict(base, type='call', match=r'(?:^|\.)' + re.escape(name) + '$', arg=argi, lit=r'^(/|https?://|[A-Za-z{$])')
+    rule.update(method=verb) if verb else rule.update(default_method='ALL' if role == 'provide' else 'GET')
+    return rule
+
+
+def custom_pack_path(cfg):
+    return os.path.join(cfg['_dir'], cfg.get('rules_dir', 'rules'), 'custom.json')
+
+
+def load_custom(cfg):
+    p = custom_pack_path(cfg)
+    return json.load(open(p, encoding='utf-8')) if os.path.exists(p) else dict(id='custom', title='화면에서 만든 규칙 (읽지 못한 꼴을 골라 만든 것)', rules=[])
+
+
+def save_custom(cfg, pack):
+    p = custom_pack_path(cfg)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    if pack['rules']:
+        write_atomic(p, json.dumps(pack, ensure_ascii=False, indent=2) + '\n')
+    elif os.path.exists(p):
+        os.remove(p)
+
+
 APP_LANGS = ('swift', 'kotlin', 'java', 'ts', 'js')
-READS = '읽을 수 있는 서버 API: Spring MVC 어노테이션 · NestJS · Express · FastAPI·Flask · Go.  앱 호출: Retrofit 어노테이션 · axios·fetch · requests · 모바일 앱 코드에 적힌 경로 문자열("/a/b.do" · "a/b" · "https://주소/a/b").'
+READS = '읽을 수 있는 서버 API: Spring MVC 어노테이션 · JAX-RS(@Path) · NestJS · Express · FastAPI·Flask · Go.  앱 호출: Retrofit 어노테이션 · axios·fetch · requests · 모바일 앱 코드에 적힌 경로 문자열("/a/b.do" · "a/b" · "https://주소/a/b").'
 
 
 def diag_findings(summary, names):
@@ -1046,6 +1096,13 @@ def print_diag(summary, names, full=False):
         print('  → ' + text)
     if any(k in ('no-routes', 'silent') for k, _, _ in finds):
         print('  ' + READS)
+    un = summary.get('unread') or []
+    if un and (full or finds):
+        print('읽지 못한 꼴  (경로처럼 생긴 문자열이 놓여 있지만 어느 규칙도 읽지 않은 자리)')
+        for x in un[:12]:
+            what = f"어노테이션 @{x['name']}" if x['kind'] == 'ann' else f"호출 {x['name']}(…)" + (f" {x['argi'] + 1}번째 인자" if x['argi'] else '')
+            print(f"  {names.get(x['sys'], x['sys'])}: {what} · {x['n']}개 · 예: {', '.join(x['ex'])}")
+        print('  설정 패널의 연결 진단에서 꼴을 골라 "API 정의로 읽기"나 "API 호출로 읽기"를 누르면 규칙이 만들어집니다.')
 
 
 def cmd_diagnose(cfg, args):
@@ -1056,7 +1113,7 @@ def cmd_diagnose(cfg, args):
     if not summary.get('diag'):
         raise SystemExit('이 결과에는 진단 정보가 없습니다. sync 를 한 번 다시 실행하세요.')
     print_diag(summary, {s['id']: s['name'] for s in cfg['systems']}, full=True)
-    if not diag_findings(summary, {}):
+    if not diag_findings(summary, {}) and not summary.get('unread'):
         print('  눈에 띄는 문제는 없습니다.')
 
 
@@ -1395,7 +1452,8 @@ def make_server(cfg, port=0):
                                   skipped=table.get(y['lang'], '').startswith('문법 없음')) for y in c['systems']],
                     external=c.get('external', []), link=dict(calls=c['link'].get('calls', {}), never=c['link'].get('never', {})),
                     built_at=man.get('built_at', ''), version=man.get('version', ''), summary=man.get('summary', {}), job=dict(job, log=job['log'][-60:]),
-                    findings=[dict(kind=k, id=sid, text=t) for k, sid, t in diag_findings(man.get('summary', {}), {y['id']: y['name'] for y in c['systems']})], reads=READS)
+                    findings=[dict(kind=k, id=sid, text=t) for k, sid, t in diag_findings(man.get('summary', {}), {y['id']: y['name'] for y in c['systems']})], reads=READS,
+                    custom=[dict(id=r.get('id'), role=r.get('role'), **r.get('made', {})) for r in load_custom(c)['rules']])
 
     def words(v, limit=30):
         """화면에서 온 목록 값: 문자열 목록이나 쉼표로 나눈 문자열을 받아 깨끗한 목록으로."""
@@ -1519,6 +1577,19 @@ def make_server(cfg, port=0):
                     c['link'][key].pop(a, None)
             save_config(c)
             return dict(ok=True)
+        if name == 'rule':                    # 읽지 못한 꼴을 규칙으로 만들거나, 만든 규칙을 지운다 (작업 공간의 rules/custom.json)
+            pack = load_custom(c)
+            if body.get('remove'):
+                pack['rules'] = [r for r in pack['rules'] if r.get('id') != body['remove']]
+                save_custom(c, pack)
+                return dict(ok=True)
+            sid, kind, pname, role = str(body.get('sys') or ''), body.get('kind'), str(body.get('name') or '')[:120], body.get('role')
+            if sid not in {y['id'] for y in c['systems']} or kind not in ('ann', 'call') or role not in ('provide', 'consume') or not re.match(r'[A-Za-z_][\w.]*$', pname):
+                raise SystemExit('만들 수 없는 규칙입니다.')
+            rule = custom_rule(sid, kind, pname, int(body.get('argi') or 0), role)
+            pack['rules'] = [r for r in pack['rules'] if r.get('made') != rule['made']] + [rule]       # 같은 꼴에는 규칙 하나: 다시 고르면 바꾼다
+            save_custom(c, pack)
+            return dict(id=rule['id'])
         if name == 'layout':                  # 화면에서 옮긴 시스템 자리: 작업 공간 메모에 적어 같이 쓰는 사람에게도 같은 배치로 보이게 한다
             npath = os.path.join(live, 'atlas-notes.json')
             notes = json.load(open(npath, encoding='utf-8')) if os.path.exists(npath) else {}

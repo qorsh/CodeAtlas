@@ -92,6 +92,7 @@ def rule_annotation(R, rid, i, u, fi, items):
             return
         if hit:
             prefix = (_ann_values(hit[0], P.get('path')) or [''])[0]
+            hit[0]['_used'] = 1
             if R.get('unit_kind'):
                 u['kind'] = R['unit_kind']
     if R.get('prefix_call'):       # router = APIRouter(prefix="/payments") 처럼 호출 인자로 주어지는 접두 경로
@@ -117,8 +118,12 @@ def rule_annotation(R, rid, i, u, fi, items):
             paths = _ann_values(an, R.get('path'))
             if R.get('path_from'):
                 paths = [v for o in m['anns'] if o['name'].split('.')[-1] in R['path_from'] for v in _ann_values(o, None)]
+                for o in m['anns']:
+                    if o['name'].split('.')[-1] in R['path_from']:
+                        o['_used'] = 1
             if R.get('require_path') and not paths:
                 continue
+            an['_used'] = 1
             for method in methods:
                 for path in paths or ['']:
                     rule_hits[rid] += 1
@@ -222,12 +227,14 @@ def rule_call(R, rid, i, u, fi, items):
         if R.get('kind', 'http') != 'http':
             other_ports.append([R['kind'], R['role'], key, i, sc['mi'], rid])
             rule_hits[rid] += 1
+            sc['_used'] = 1
             continue
         method = R['method_map'].get(mm.group(R.get('method_group', 1))) if R.get('method_map') else _sub(R['method'], mm).upper() if R.get('method') else None
         if not method and R.get('method_near'):
             near = re.search(R['method_near'], fi['src'][sc['end']:sc['end'] + 220].split(');')[0])
             method = near.group(1).upper() if near else None
         method = lit_method or method or R.get('default_method', 'GET')
+        sc['_used'] = 1
         if R['role'] == 'provide':
             tu, tm = (handler_ref(i, u, fi, sc) or (i, sc['mi'])) if R.get('handler') else (i, sc['mi'])
             routes.append(dict(method=method, path=_join('', key), unit=tu, member=tm, rule=rid))
@@ -349,7 +356,7 @@ def heur_base_url(R, rid, i, u, fi, items):
             if in_comment(fi, pos):
                 continue
             if m.group('arg') and '/' not in m.group('arg'):
-                # get("menuId") 처럼 조각 하나짜리 인자: 맵·JSON 에서 값을 꺼내는 호출이 대부분이다. 받는 쪽 이름이 통신 객체로 보일 때만 호출로 친다
+                # get("name") 처럼 조각 하나짜리 인자: 맵·JSON 에서 값을 꺼내는 호출이 대부분이다. 받는 쪽 이름이 통신 객체로 보일 때만 호출로 친다
                 recv = re.search(r'([A-Za-z_]\w*)\s*(?:\?|!!)?\.\s*$', seg[max(0, m.start() - 60):m.start()])
                 if recv and not _CLIENTISH.search(recv.group(1)):
                     continue
@@ -403,6 +410,8 @@ for i, u in enumerate(units):
         if not ((pack.get('auto', True) and pid not in off) or pid in extra):
             continue
         for k, R in enumerate(pack['rules']):
+            if (R.get('langs') and lang not in R['langs']) or (R.get('systems') and u['sys'] not in R['systems']):
+                continue
             rid = f"{pid}#{R.get('id', k)}"
             if R['type'] == 'heuristic':
                 HEURISTICS[R['name']](R, rid, i, u, fi, items)
@@ -415,3 +424,48 @@ for i, u in enumerate(units):
             rule_hits[rec[4]] += 1
         else:
             db_access.append(rec)
+
+
+# ───────────────────────────── 읽지 못한 꼴 ─────────────────────────────
+# 경로처럼 생긴 문자열이 어노테이션 인자나 호출 인자로 놓여 있는데 어느 규칙도 읽지 않은 자리를 꼴별로 센다.
+# 규칙이 없는 프레임워크를 쓴 코드가 어디에 어떤 모양으로 있는지 드러내려는 것이고, 화면에서 그 꼴을 골라 규칙으로 만들 수 있다.
+_PATHY = re.compile(r'^(?:/[A-Za-z_{:][\w\-{}:.$*]*(?:/[\w\-{}:.$*]*)*|[A-Za-z_{:][\w\-{}:.$*]*(?:/[\w\-{}:.$*]+)+)/?$')
+_NOT_API = re.compile(r'\.(jsp|html?|png|jpe?g|gif|svg|ico|css|js|xml|properties|txt|ya?ml|sql|jar|class|ttf|woff2?|mp[34]|pdf|xlsx?|zip)$', re.I)
+_NOISE_CALL = re.compile(r'(?i)^(equals\w*|contains|startsWith|endsWith|replace\w*|split|matches|indexOf|lastIndexOf|format|append|compile|print\w*|log|debug|info|warn|error|trace|[deiwv]|'
+                         r'File|Paths?|getResource\w*|FileInputStream|FileReader|FileWriter|readFile\w*|require|loadLibrary|ModelAndView|forward|sendRedirect|getRequestDispatcher|include|'
+                         r'Intent|valueOf|join|trim|asList|assert\w*|expect|describe|it|test|getString|getProperty|getenv|getParameter|getHeader|getAttribute|setAttribute|addObject|addAttribute|'
+                         r'import|from|package|use|if|elif|for|while|switch|case|when|return|catch|throw|new|typeof|await|yield|and|or|not|in|is)$')
+
+
+def _pathy(v):
+    return 2 <= len(v) <= 120 and _PATHY.match(v) and not _MIME.match(v) and not _NOT_API.search(v)
+
+
+unread = {}        # (시스템, 'ann'|'call', 이름, 인자 번호) → [개수, 문자열 표본]
+
+
+def _unread(sys_id, kind, name, argi, value):
+    t = unread.setdefault((sys_id, kind, name, argi), [0, []])
+    t[0] += 1
+    if value not in t[1] and len(t[1]) < 40:        # 표본: 연결 단계가 '이미 다른 방법으로 이어진 꼴인가'를 가릴 때 쓴다
+        t[1].append(value)
+
+
+for u in units:
+    if not u['file'] or is_schema(u):
+        continue
+    all_anns = [x for m in u['members'] for x in m.get('anns', [])] + list(u.get('anns', []))
+    in_ann = lambda q: any(an['span'][0] <= q < an['span'][1] for an in all_anns)       # 어노테이션 인자 안의 문자열은 어노테이션 꼴로만 센다
+    for an in all_anns:
+        if an.get('_used'):
+            continue
+        for v in an['pos'] + [x for k in ('value', 'path', 'url', 'uri') for x in an['kw'].get(k, [])]:
+            if _pathy(v):
+                _unread(u['sys'], 'ann', an['name'].split('.')[-1], 0, v)
+    for sc in u.get('scalls', []):
+        if sc.get('_used') or not sc['chain'] or sc['kw'] or not _pathy(sc['lit']) or in_ann(sc['q']):
+            continue
+        parts = [p for p in re.split(r'\s*\.\s*', sc['chain']) if p]
+        if not parts or _NOISE_CALL.match(parts[-1]) or not re.match(r'[A-Za-z_]\w*$', parts[-1]):
+            continue
+        _unread(u['sys'], 'call', '.'.join(parts[-2:]), sc['argi'] or 0, sc['lit'])

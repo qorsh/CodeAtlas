@@ -32,6 +32,10 @@ setTimeout(() => { console.log(out.join('\n')); console.log('시간 초과'); do
   const extra = path.join(tmp, 'more', 'extra-web'); fs.mkdirSync(path.join(extra, 'src'), {recursive:true});
   fs.writeFileSync(path.join(extra, 'package.json'), '{"name": "extra-web", "dependencies": {"react": "18.3.1"}}');
   fs.copyFileSync(path.join(REPO, 'fixtures', 'booking', 'booking-web', 'src', 'api.ts'), path.join(extra, 'src', 'api.ts'));
+  // 규칙이 없는 방식으로 API 를 정의한 서버: 읽지 못한 꼴로 잡혀야 하고, 화면에서 규칙으로 만들 수 있어야 한다
+  const pushApi = path.join(tmp, 'more', 'push-api'); fs.mkdirSync(path.join(pushApi, 'src', 'main', 'java', 'demo'), {recursive:true});
+  fs.writeFileSync(path.join(pushApi, 'pom.xml'), '<project/>');
+  fs.writeFileSync(path.join(pushApi, 'src', 'main', 'java', 'demo', 'PushHandlers.java'), 'package demo;\n\npublic class PushHandlers {\n' + ['list', 'send', 'read'].map(n => `    @Endpoint("/push/${n}")\n    public String ${n}() { return ""; }\n`).join('\n') + '}\n');
   const extra2 = path.join(tmp, 'more', 'extra-two'); fs.mkdirSync(path.join(extra2, 'src'), {recursive:true});
   fs.writeFileSync(path.join(extra2, 'package.json'), '{"name": "extra-two", "dependencies": {"react": "18.3.1"}}');
   fs.copyFileSync(path.join(REPO, 'fixtures', 'backoffice', 'src', 'api.ts'), path.join(extra2, 'src', 'api.ts'));
@@ -155,6 +159,9 @@ setTimeout(() => { console.log(out.join('\n')); console.log('시간 초과'); do
   await tap('#cfg [data-c="add-more"]'); await sleep(700);
   const c7 = await text('#cfg');
   ok('추가만 하면 폴더 고르는 화면에 남고 넣은 폴더가 표시된다', c7.includes('extra-web 을(를) 추가했습니다') && (await text('#cfg .dirs')).includes('추가됨') && c7.includes('다시 분석'), c7.slice(0, 300));
+  await tap('#cfg .dirs [data-v="push-api"]'); await sleep(500);
+  await tap('#cfg [data-c="preview"]'); await sleep(600);
+  await tap('#cfg [data-c="add-more"]'); await sleep(700);
   await tap('#cfg .dirs [data-v="extra-two"]'); await sleep(500);
   await tap('#cfg [data-c="preview"]'); await sleep(600);
   await tap('#cfg [data-c="add"]');
@@ -164,6 +171,17 @@ setTimeout(() => { console.log(out.join('\n')); console.log('시간 초과'); do
   ok('경로가 같은 호출은 틀린 서버에 붙이지 않는다', await ev(`!__T.EDGES.some(e => e.g === 'http' && __T.UNITS[e.s].sys === 'extra-web' && __T.UNITS[e.t].sys === 'order-service')`));
   await tap('#level [data-lv="0"]'); await sleep(1400);
   await snap('6b-after-add');
+
+  // 7b) 읽지 못한 꼴을 골라 규칙으로 만들기
+  ok('규칙이 없는 방식을 왼쪽 위 상자가 알린다', (await text('#pendbox')).includes('읽지 못한 꼴 1가지'), await text('#pendbox'));
+  await tap('#pendbox [data-act="cfg"]'); await sleep(600);
+  const c8 = await text('#cfg');
+  ok('설정 패널에 읽지 못한 꼴이 예와 함께 나온다', c8.includes('읽지 못한 꼴') && c8.includes('어노테이션 @Endpoint') && c8.includes('/push/list'), c8.slice(0, 400));
+  await tap('#cfg [data-c="rule"][data-role="provide"]'); await sleep(600);
+  ok('API 정의로 읽기를 누르면 규칙이 만들어진다', (await text('#cfg')).includes('API 정의로 읽게 했습니다') && fs.existsSync(path.join(ws, 'rules', 'custom.json')), (await text('#cfg')).slice(0, 400));
+  await tap('#cfg-status [data-c="sync"]');
+  ok('다시 분석하면 그 꼴이 API 로 읽힌다', await ready(`!!__T.SYS['push-api'] && __T.SYS['push-api'].routes === 3`, 40000), await ev(`JSON.stringify(__T.SYS['push-api'] ? __T.SYS['push-api'].routes : null)`));
+  ok('읽지 못한 꼴 알림이 사라진다', !(await text('#pendbox')).includes('읽지 못한 꼴'), await text('#pendbox'));
 
   // 8) 자동 정렬로 되돌리기
   await tap('#level .lvnav'); await sleep(300);
@@ -182,7 +200,7 @@ setTimeout(() => { console.log(out.join('\n')); console.log('시간 초과'); do
   ok('휴대폰 폭에서 설정 패널이 화면 안에 들어온다', await ev(`(() => { const r = document.querySelector('#cfgbox').getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth + 1; })()`));
   await snap('8-phone-settings');
 
-  ok('연결이 다 이어진 예에서는 끊김 표시가 없다', await ev(`__T.SYSL.every(s => !s.cut) && !document.querySelector('#pendbox').innerText.includes('연결을 찾지 못한')`), await text('#pendbox'));
+  ok('부르는 곳이 없는 서버에만 끊김 표시가 붙는다', await ev(`__T.SYSL.filter(s => s.cut).map(s => s.id).join(',') === 'push-api' && __T.SYS['push-api'].cut.kind === 'no-callers'`), await ev(`__T.SYSL.filter(s => s.cut).map(s => s.id).join(',')`));
   ok('화면에서 난 오류가 없다', errors.length === 0, errors.slice(0, 3).join(' | '));
   console.log(out.join('\n'));
   const bad = out.filter(l => l.includes('실패')).length;

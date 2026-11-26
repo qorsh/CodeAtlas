@@ -1,0 +1,34 @@
+{
+  "id": "jaxrs",
+  "title": "JAX-RS 리소스 (@Path 클래스 + @GET·@POST … 메서드)",
+  "langs": [
+    "java",
+    "kotlin"
+  ],
+  "rules": [
+    {
+      "id": "resource",
+      "type": "annotation",
+      "kind": "http",
+      "role": "provide",
+      "names": {
+        "GET": "GET",
+        "POST": "POST",
+        "PUT": "PUT",
+        "DELETE": "DELETE",
+        "PATCH": "PATCH",
+        "HEAD": "HEAD"
+      },
+      "path_from": [
+        "Path"
+      ],
+      "prefix": {
+        "names": [
+          "Path"
+        ],
+        "required": true
+      },
+      "unit_kind": "controller"
+    }
+  ]
+}

@@ -1389,6 +1389,10 @@ function renderNav(el){
   el.innerHTML = `<div class="side-head"><div><span class="eyebrow">설정</span><h2>${esc(String(META.repo || '코드 아틀라스'))}</h2></div><button class="x" data-act="nav" aria-label="설정 닫기">닫기</button></div>
   <div class="side-body">
     ${API.ok ? `<section><h3>프로젝트</h3><div class="acts"><button class="act" data-act="cfg">폴더 추가 · 레거시 · 다시 분석</button></div></section>` : ''}
+    ${(() => { const sum = (SCALE === 1 && MAN && MAN.summary) || {}, none = (sum.findings || []).find(f => f.kind === 'no-routes'), un = sum.unread || [];
+      return (none ? `<section><h3 style="color:#FFB454">서버 API</h3><p>${esc(none.text)}</p></section>` : '')
+        + (un.length ? `<section><h3 style="color:#FFB454">읽지 못한 꼴 <em>${un.length}가지</em></h3><div class="xlink">${un.slice(0, 8).map(x => `<button class="xrow srow" data-sys="${esc(x.sys)}" style="--c:#FFB454"><span class="k">${x.kind === 'ann' ? '어노테이션' : '호출'}</span><span class="n">${x.kind === 'ann' ? '@' + esc(x.name) : esc(x.name) + '(…)'}<span class="r">${esc(SYS[x.sys] ? SYS[x.sys].name : x.sys)} · 경로 문자열 ${x.n}개 · 예: ${x.ex.map(esc).join(' · ')}</span></span></button>`).join('')}</div>
+          <p class="note" style="margin-top:6px">경로처럼 생긴 문자열이 놓여 있는데 어느 규칙도 읽지 않은 자리입니다. ${API.ok ? '프로젝트 설정의 "읽지 못한 꼴"에서 규칙으로 만들 수 있습니다.' : '분석하는 쪽에서 규칙을 더하면 읽습니다.'}</p></section>` : ''); })()}
     ${cutSystems().length ? `<section><h3 style="color:#FFB454">연결을 찾지 못한 곳 <em>${cutSystems().length}</em></h3><div class="xlink">${cutSystems().map(s => `<button class="xrow srow" data-sys="${esc(s.id)}" style="--c:#FFB454"><span class="k">끊김</span><span class="n">${esc(s.name)}<span class="r">${esc(s.cut.text.replace(s.name + ': ', ''))}</span></span></button>`).join('')}</div>
       <p class="note" style="margin-top:6px">선이 없다고 관계가 없는 것은 아닙니다. 분석기가 그 연결을 읽지 못한 것입니다. 지도에서는 주황 점선으로 표시합니다.</p></section>` : ''}
     ${UNITS.some(u => u.openN) ? `<section><h3>부르는 곳 없는 API <em>${SYSL.filter(s => !s.base).reduce((a,s) => a + s.open, 0)}</em></h3><div class="acts"><button class="act" data-act="open-apis">목록 보기</button></div></section>` : ''}
@@ -1423,9 +1427,11 @@ const pendingCount = () => SCALE === 1 ? UNITS.reduce((a,u) => a + (u.pend ? u.p
 function renderPending(){
   const el = $('#pendbox'); if (!el) return;
   const n = pendingCount(), off = SCALE === 1 && META.offmap ? META.offmap.length : 0, cuts = cutSystems().length;
-  if (!n && !off && !cuts){ el.hidden = true; el.innerHTML = ''; return; }
-  el.innerHTML = (cuts ? `<b>연결을 찾지 못한 시스템 ${cuts}곳</b><br>` : '') + (n ? `<b>확인이 필요한 호출 ${n}</b><br>` : '') + (off ? `지도에 없는 주소로 가는 호출 ${off}곳<br>` : '')
-    + (cuts ? `<button class="mini-act" data-act="cuts" style="color:#FFB454;border-color:#FFB454">이유 보기</button>` : '')
+  const sum = (SCALE === 1 && MAN && MAN.summary) || {}, none = (sum.findings || []).some(f => f.kind === 'no-routes'), un = (sum.unread || []).length;      // 서버 API 를 통째로 못 읽은 경우, 규칙이 없는 방식
+  if (!n && !off && !cuts && !none && !un){ el.hidden = true; el.innerHTML = ''; return; }
+  el.innerHTML = (none ? `<b>서버 API 를 하나도 읽지 못했습니다</b><br>` : '') + (cuts ? `<b>연결을 찾지 못한 시스템 ${cuts}곳</b><br>` : '') + (un ? `<b>읽지 못한 꼴 ${un}가지</b> · 규칙으로 만들 수 있습니다<br>` : '')
+    + (n ? `<b>확인이 필요한 호출 ${n}</b><br>` : '') + (off ? `지도에 없는 주소로 가는 호출 ${off}곳<br>` : '')
+    + (cuts || none || un ? `<button class="mini-act" data-act="cuts" style="color:#FFB454;border-color:#FFB454">이유 보기</button>` : '')
     + (n ? `<button class="mini-act" data-act="pending" style="color:#FFB454;border-color:#FFB454">목록 보기</button>` : '') + (API.ok ? `<button class="mini-act" data-act="cfg">설정</button>` : '');
   el.hidden = false;
 }
@@ -1676,10 +1682,20 @@ function renderConfig(){
   const diag = dg ? `<section><h3${probs.length ? ' style="color:#FFB454"' : ''}>연결 진단 <em>${probs.length ? `확인할 것 ${probs.length}` : '눈에 띄는 문제 없음'}</em></h3>
       ${finds.map(f => `<div class="aibar${f.kind === 'prefix' ? '' : ' err'}" style="margin-bottom:6px"><span>${esc(f.text)}</span></div>`).join('')}${drows}
       <p class="note" style="margin-top:6px">내주는 API ${dsum.r.toLocaleString()}개 · 부르는 호출 ${dsum.c.toLocaleString()}개 중 이어진 것 ${dsum.l.toLocaleString()}개.${probs.some(f => f.kind === 'no-routes' || f.kind === 'silent') ? ' ' + esc(st.reads || '') : ''}</p></section>` : '';
+  // 읽지 못한 꼴: 경로처럼 생긴 문자열이 어노테이션·호출 인자로 놓여 있는데 어느 규칙도 읽지 않은 자리. 골라서 규칙으로 만든다
+  const un = st.summary.unread || [], cu = st.custom || [], what = x => x.kind === 'ann' ? '어노테이션 @' + esc(x.name) : '호출 ' + esc(x.name) + '(…)' + (x.argi ? ` ${x.argi + 1}번째 인자` : '');
+  const pickStyle = on => on ? ' style="color:var(--holo);border-color:var(--holo)"' : '';
+  const unRows = un.map((x, i) => { const made = cu.find(r => r.sys === x.sys && r.kind === x.kind && r.name === x.name && (r.argi || 0) === (x.argi || 0));
+    return `<div class="crow"><span class="nm">${what(x)}<small>${esc(sysName(x.sys))} · 경로 문자열 ${x.n}개 · 예: ${x.ex.map(esc).join(' · ')}${made ? ` · ${made.role === 'provide' ? 'API 정의' : 'API 호출'}로 읽게 했습니다. 다시 분석하면 반영됩니다` : ''}</small></span>${made ? '' : `<button class="mini-act" data-c="rule" data-role="provide" data-i="${i}"${pickStyle(x.hint === 'provide')}>API 정의로 읽기</button><button class="mini-act" data-c="rule" data-role="consume" data-i="${i}"${pickStyle(x.hint === 'consume')}>API 호출로 읽기</button>`}</div>`; }).join('');
+  const cuRows = cu.map(r => `<div class="crow"><span class="nm">${what(r)}<small>${esc(sysName(r.sys))} · ${r.role === 'provide' ? 'API 정의로 읽음' : 'API 호출로 읽음'}</small></span><button class="mini-act" data-c="rule-remove" data-v="${esc(r.id)}">지우기</button></div>`).join('');
+  const unread = un.length || cu.length ? `<section><h3${un.length ? ' style="color:#FFB454"' : ''}>읽지 못한 꼴 <em>${un.length ? `규칙이 없는 방식 ${un.length}가지` : '만든 규칙'}</em></h3>
+      ${un.length ? `<p class="note" style="margin-bottom:6px">경로처럼 생긴 문자열이 놓여 있는데 어느 규칙도 읽지 않은 자리입니다. 서버가 API 를 정의하는 꼴이면 "API 정의로", 다른 서버를 부르는 꼴이면 "API 호출로"를 고르세요. 밝게 표시한 쪽이 어림한 답입니다.</p>${unRows}` : ''}
+      ${cuRows ? `<p class="note" style="margin:8px 0 4px">만든 규칙 (이 작업 공간의 rules/custom.json)</p>${cuRows}` : ''}</section>` : '';
   el.innerHTML = head + `<div class="side-body">${top}
     <section><h3>소스 폴더 <em>${st.sources.length}</em></h3>${src}<div class="acts" style="margin-top:10px"><button class="act" data-c="open-add">폴더 추가</button><button class="act" data-c="sync">다시 분석</button></div>
       <p class="note" style="margin-top:6px">마지막 분석 ${esc((st.built_at || '없음').replace('T', ' '))} · 유닛 ${(st.summary.units || 0).toLocaleString()} · 연결 ${(st.summary.edges || 0).toLocaleString()}. 같은 서버는 한 번만 넣어야 지도에 하나로 나옵니다.</p></section>
     ${diag}
+    ${unread}
     ${pend || rules ? `<section>${pend ? `<h3 style="color:#FFB454">확인이 필요한 호출 <em>어느 서버를 부르는지 정해 주세요</em></h3>` : `<h3>부르는 서버 지정 <em>${rules ? '정해 둔 것' : ''}</em></h3>`}${pend}${rules}</section>` : ''}
     ${st.systems.length ? `<section><h3>시스템 이름과 서버 주소 <em>${st.systems.length}</em></h3>${sys}<p class="note" style="margin-top:6px">이름은 지도에 보이는 이름입니다. 경로 접두어는 게이트웨이나 WAS 가 경로 앞에 붙이는 부분입니다(대개는 자동으로 맞춥니다). 서버 주소를 적어 두면, 그 주소로 가는 호출은 경로가 다른 서버와 겹쳐도 이 서버에 붙습니다. 쉼표로 여러 개를 적을 수 있습니다.${seen.length ? ' 코드에서 본 주소: ' + seen.map(esc).join(', ') : ''}</p></section>` : ''}
     <section><h3>레거시 <em>소스 없이 지도에 올리는 시스템</em></h3>${xs}${off ? `<p class="note" style="margin:8px 0 4px">지도에 없는 주소로 가는 호출</p>${off}` : ''}
@@ -1728,6 +1744,8 @@ function bindConfig(){
     else if (c === 'ext-from'){ CFG.ext = {hosts:v}; }
     else if (c === 'ext-add'){ const x = {name:val('x-name'), hosts:val('x-hosts'), paths:val('x-paths'), clients:val('x-clients')}; if (await call('external', x)){ CFG.ext = null; CFG.dirty = true; } else CFG.ext = x; }
     else if (c === 'ext-remove'){ if (armed !== 'ext:' + v) CFG.confirm = 'ext:' + v; else if (await call('external', {remove:v})) CFG.dirty = true; }
+    else if (c === 'rule'){ const x = (API.st.summary.unread || [])[+t.dataset.i]; if (x && await call('rule', {sys:x.sys, kind:x.kind, name:x.name, argi:x.argi, role:t.dataset.role})) CFG.dirty = true; }
+    else if (c === 'rule-remove'){ if (await call('rule', {remove:v})) CFG.dirty = true; }
     else if (c === 'link'){ if (await call('link', {from:t.dataset.from, to:t.dataset.to, mode:'calls'})) CFG.dirty = true; }
     else if (c === 'link-clear'){ if (await call('link', {from:t.dataset.from, to:t.dataset.to, mode:'drop'})) CFG.dirty = true; }
     else if (c === 'sync'){ CFG.dirty = false; await startJob('sync'); }
