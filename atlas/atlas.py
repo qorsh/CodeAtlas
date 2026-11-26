@@ -481,20 +481,40 @@ def resolve_calls(cfg, units, routes, http, hosts):
                 key = (cs, sid, 'add', tuple(rsegs[:m - n]))           # 호출에 접두어가 빠져 있다
             else:
                 continue
-            votes.setdefault(key, {}).setdefault(i, r)
-    support = {k: min(len({shape(unmatched[i][2], unmatched[i][7]) for i in v}), len({id(r) for r in v.values()}) + 1) for k, v in votes.items()}     # 서로 다른 호출이 서로 다른 API 에 맞아야 근거가 된다
+            votes.setdefault(key, {}).setdefault(i, []).append(r)      # 같은 경로가 여러 클래스에 있으면 후보가 여럿이다
+    support = {k: min(len({shape(unmatched[i][2], unmatched[i][7]) for i in v}), len({id(r) for rs in v.values() for r in rs}) + 1) for k, v in votes.items()}     # 서로 다른 호출이 서로 다른 API 에 맞아야 근거가 된다
     accepted = {k for k, n in support.items() if n >= 3 or (n >= 2 and n * 2 >= len(real_n.get(k[0], ())))}
-    used, taken = {}, set()
+    # 접두어를 뗀 경로가 여러 클래스에 있을 때(클래스에 기준 경로가 없고 설정 파일에서 정하는 서버에서 흔하다) 어느 클래스인지 고른다.
+    #   1) 같은 접두어의 다른 호출이 하나뿐인 후보로 간 클래스 (그 접두어를 맡은 클래스로 본다)
+    #   2) 접두어의 마지막 조각이 이름·모듈·파일 경로에 든 클래스 (/order → OrderResource)
+    # 둘 다 없으면 먼저 나온 것을 고르고 추정으로 표시한다.
+    home = {k: {} for k in accepted}
+    for k in accepted:
+        for rs in votes[k].values():
+            if len({r['unit'] for r in rs}) == 1:
+                home[k][rs[0]['unit']] = home[k].get(rs[0]['unit'], 0) + 1
+    flat = lambda t: re.sub(r'[^a-z0-9]', '', t.lower())
+
+    def named(r, k):
+        tag = flat(k[3][-1]) if k[3] else ''
+        x = units[r['unit']]
+        return 0 if len(tag) < 2 else 2 if tag in flat(x['name']) else 1 if tag in flat(x.get('mod') or '') or tag in flat(x.get('file') or '') else 0
+
+    used, unsure, taken = {}, {}, set()
     for i, (u, mi, method, path, rule, host, owner, segs) in enumerate(unmatched):
         keys = [k for k in accepted if i in votes[k]]
         if keys:
             k = max(keys, key=lambda k: (support[k], -len(k[3])))
-            resolved.append((u, mi, rule, votes[k][i], 'prefix'))
+            rs = votes[k][i]
+            best = max(rs, key=lambda r: (home[k].get(r['unit'], 0), named(r, k)))
+            sure = len({r['unit'] for r in rs}) == 1 or home[k].get(best['unit'], 0) > 0 or named(best, k) > 0
+            resolved.append((u, mi, rule, best, 'prefix' if sure else 'prefix-guess'))
             how_n['prefix'] = how_n.get('prefix', 0) + 1
             used[k] = used.get(k, 0) + 1
+            unsure[k] = unsure.get(k, 0) + (not sure)
             taken.add(i)
             tally(units[u]['sys'], 'linked')
-    prefixes = [dict(frm=k[0], to=k[1], kind=k[2], prefix='/' + '/'.join(k[3]), n=n) for k, n in sorted(used.items(), key=lambda kv: -kv[1])]
+    prefixes = [dict(frm=k[0], to=k[1], kind=k[2], prefix='/' + '/'.join(k[3]), n=n, unsure=unsure.get(k, 0)) for k, n in sorted(used.items(), key=lambda kv: -kv[1])]
     for i, (u, mi, method, path, rule, host, owner, segs) in enumerate(unmatched):       # 끝내 못 맞춘 호출
         if i in taken:
             continue
@@ -573,7 +593,7 @@ def link(cfg, results, sources, rules):
     for u, mi, rule, r, how in api['resolved']:
         a = agg.setdefault((u, r['unit']), dict(w=0, routes=[], rules=[], sure=0))
         a['w'] += 1
-        a['sure'] += how != 'affinity'
+        a['sure'] += how not in ('affinity', 'prefix-guess')
         label = f"{r['method']} {r['path']}"
         if label not in a['routes']:
             a['routes'].append(label)
@@ -1062,7 +1082,8 @@ def diag_findings(summary, names):
         out.append(('no-routes', '', '서버가 내주는 API 를 하나도 읽지 못했습니다. 서버 프레임워크의 규칙이 없거나 서버 소스가 빠져 있습니다.'))
     for p in d.get('prefixes', []):
         out.append(('prefix', p['frm'], f"{nm(p['frm'])} → {nm(p['to'])}: " + (f"호출 경로 앞의 {p['prefix']} 를 떼면 맞아서 {p['n']}개를 이었습니다." if p['kind'] == 'strip'
-                                                                              else f"호출에는 없는 {p['prefix']} 가 API 경로 앞에 붙어 있어, 붙여서 {p['n']}개를 이었습니다.")))
+                                                                              else f"호출에는 없는 {p['prefix']} 가 API 경로 앞에 붙어 있어, 붙여서 {p['n']}개를 이었습니다.")
+                    + (f" 그중 {p['unsure']}개는 같은 경로가 여러 클래스에 있어 어느 클래스인지 추정했습니다." if p.get('unsure') else '')))
     for x in S:
         if x['routes'] >= 3 and x.get('open') == x['routes'] and len(S) >= 2:      # 요청을 처리하는 곳은 있는데 거기로 들어오는 연결이 하나도 없다
             out.append(('no-callers', x['id'], f"{nm(x['id'])}: API {x['routes']}개를 내주는데 부르는 곳을 하나도 찾지 못했습니다. 이 서버를 부르는 앱의 호출을 읽지 못했거나 그 앱이 지도에 없습니다."))

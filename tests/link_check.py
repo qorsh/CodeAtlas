@@ -415,5 +415,40 @@ export const f = () => fetch('/push/read');
     check('경로가 아닌 문자열(헤더, 파일 주소, 한글 문구)은 읽지 못한 꼴에 넣지 않는다', not any(k[2] in ('Headers', 'URL', 'Text.bind') for k in un), list(un))
     check('diagnose 가 읽지 못한 꼴을 보여 준다', '읽지 못한 꼴' in atlas(cfg, 'diagnose') and '어노테이션 @Endpoint' in atlas(cfg, 'diagnose'))
 
+with tempfile.TemporaryDirectory() as ws, tempfile.TemporaryDirectory() as src:
+    print('9) 클래스에 기준 경로가 없고 같은 경로가 여러 클래스에 있는 서버')
+
+    def resource(name, paths):
+        body = ''.join(f'    @POST\n    @Path("/{p}")\n    public String {p}() {{ return ""; }}\n\n' for p in paths)
+        put(os.path.join(src, 'hub', 'src', 'main', 'java', 'demo', name + '.java'), f'package demo;\n\nimport javax.ws.rs.POST;\nimport javax.ws.rs.Path;\n\npublic class {name} {{\n{body}}}\n')
+
+    put(os.path.join(src, 'hub', 'pom.xml'), '<project/>')
+    resource('OrderResource', ['list', 'detail', 'approve'])          # approve 는 여기에만 있다
+    resource('StockResource', ['list', 'detail', 'adjust', 'save'])   # adjust 는 여기에만 있다
+    resource('FleetResource', ['list', 'detail', 'save'])             # 여기에만 있는 경로가 없다: 이름으로 골라야 한다
+    web(src, 'console', """
+const post = (p: string) => fetch(p, { method: 'POST' });
+export const a1 = () => post('/ctx/order/list');
+export const a2 = () => post('/ctx/order/detail');
+export const a3 = () => post('/ctx/order/approve');
+export const b1 = () => post('/ctx/stock/list');
+export const b2 = () => post('/ctx/stock/detail');
+export const b3 = () => post('/ctx/stock/adjust');
+export const c1 = () => post('/ctx/fleet/list');
+export const c2 = () => post('/ctx/fleet/detail');
+export const c3 = () => post('/ctx/fleet/save');
+""")
+    cfg = os.path.join(ws, 'atlas.config.json')
+    atlas(cfg, 'init', 'link-check-classes')
+    atlas(cfg, 'add', os.path.join(src, 'hub'))
+    atlas(cfg, 'add', os.path.join(src, 'console'))
+    out = atlas(cfg, 'sync')
+    recs = json.load(open(os.path.join(ws, 'atlas-data.json'), encoding='utf-8'))
+    us = [r for r in recs if r['rt'] == 'unit']
+    to = {us[e['t']]['name']: sorted(e['routes']) for e in recs if e['rt'] == 'edge' and e['k'] == 'http'}
+    check('다른 호출이 하나뿐인 후보로 간 클래스를 고른다', to.get('OrderResource') == ['POST /approve', 'POST /detail', 'POST /list'] and to.get('StockResource') == ['POST /adjust', 'POST /detail', 'POST /list'], to)
+    check('그런 근거가 없으면 접두어가 이름에 든 클래스를 고른다', to.get('FleetResource') == ['POST /detail', 'POST /list', 'POST /save'], to)
+    check('근거가 있으면 추정으로 표시하지 않는다', '추정했습니다' not in out and not any(e.get('guess') for e in recs if e['rt'] == 'edge'), out[-600:])
+
 print('실패 %d건: %s' % (len(fails), ', '.join(fails)) if fails else '통과')
 sys.exit(1 if fails else 0)
