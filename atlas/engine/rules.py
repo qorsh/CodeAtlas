@@ -173,17 +173,45 @@ def handler_ref(i, u, fi, sc):
     return having[0] if len(having) == 1 else None
 
 
+# ── 기준 주소 상수: BASE_URL = "https://api.example.com" 처럼 이름에 주소를 담아 둔 것 ──
+_URL_CONST = re.compile(r'(?<![\w.])([A-Za-z_]\w*)\s*(?::\s*[\w.<>?\[\] ]+?)?\s*[:=]\s*(?:URL\(\s*string:\s*)?[frb]?["\'`](https?://[A-Za-z0-9.\-]+(?::\d{2,5})?)(/[^"\'`\s{}$]*)?["\'`]')
+URL_CONSTS = {}        # 이름공간 → {이름: {주소}}
+_const_files = set()
+for _u in units:
+    if _u['file'] and _u['file'] not in _const_files:
+        _const_files.add(_u['file'])
+        for _m in _URL_CONST.finditer(file_info[_u['file']]['src']):
+            URL_CONSTS.setdefault(NS[_u['sys']], {}).setdefault(_m.group(1), set()).add((_m.group(2) + (_m.group(3) or '')).rstrip('/'))
+_LEAD = re.compile(r'^(?:\$\{\s*([A-Za-z_][\w.]*)\s*\}|\{\s*([A-Za-z_][\w.]*)\s*\}|\$([A-Za-z_]\w*)|\\\(\s*([A-Za-z_][\w.]*)\s*\))(?=/)')
+
+
+def const_url(name, ns):
+    urls = URL_CONSTS.get(ns, {}).get(name.split('.')[-1], ())
+    return next(iter(urls)) if len(urls) == 1 else ''
+
+
+def lead_base(lit, ns):
+    """문자열 맨 앞이 기준 주소 변수(`${API}/x` · `{ERP_BASE}/x` · `$BASE_URL/x`)이면, 그 이름의 주소 상수가 하나일 때 주소로 바꾸고 아니면 떼어 낸다.
+    주소가 붙으면 어느 서버로 가는 호출인지 연결 단계에서 가릴 수 있다."""
+    m = _LEAD.match(lit)
+    if not m:
+        return lit
+    return const_url(next(g for g in m.groups() if g), ns) + lit[m.end():]
+
+
 def rule_call(R, rid, i, u, fi, items):
     rx = re.compile(R['match'])
+    http = R.get('kind', 'http') == 'http'
     for sc in u.get('scalls', []):
         if not sc['chain'] or (sc['argi'] or 0) != R.get('arg', 0) or (sc['kw'] and not R.get('allow_kw')):
             continue
         mm = rx.search(sc['chain'])
-        if not mm or (R.get('lit') and not re.search(R['lit'], sc['lit'])):
+        lit = lead_base(sc['lit'], NS[u['sys']]) if http and mm else sc['lit']
+        if not mm or (R.get('lit') and not re.search(R['lit'], lit)):
             continue
         if sc.get('wrap') and not R.get('allow_wrap', True):
             continue
-        lit, lit_method = sc['lit'], None
+        lit_method = None
         if R.get('lit_method'):          # "POST /orders" 처럼 문자열 안에 메서드가 함께 적힌 꼴
             lm = re.match(R['lit_method'], lit)
             if lm:
@@ -276,8 +304,8 @@ def rule_service(R, rid, i, u, fi, items):
 
 # ── 내장 휴리스틱: 프레임워크 없이 경로 문자열을 직접 쓰는 클라이언트 ──
 _SWIFT_PATH = re.compile(r'(?:\b(get|post|request|put|patch|delete)\(\s*|(appendingPathComponent)\(\s*)"([a-z][A-Za-z0-9\-/:._]*)"')
-_KOTLIN_URL = re.compile(r'(?:\b(fetch|get|post|request)\(\s*"([a-z][A-Za-z0-9\-/]*)"|"(?:' + (r'https://(?:' + _hosts + r')|' if _hosts else '')
-                         + r'\$\{?[A-Za-z_.]*BASE_URL\}?)(/[A-Za-z0-9\-/_:.{}$]*))')
+_KOTLIN_URL = re.compile(r'(?:\b(?P<fn>fetch|get|post|request)\(\s*"(?P<arg>[a-z][A-Za-z0-9\-/]*)"|"(?:' + (r'(?P<host>https?://(?:' + _hosts + r'))|' if _hosts else '')
+                         + r'\$\{?[A-Za-z_.]*BASE_URL\}?)(?P<path>/[A-Za-z0-9\-/_:.{}$]*))')
 
 
 def heur_path_arg(R, rid, i, u, fi, items):
@@ -312,7 +340,12 @@ def heur_base_url(R, rid, i, u, fi, items):
             pos = a + m.start()
             if in_comment(fi, pos):
                 continue
-            path = m.group(2) or template_to_path(m.group(3), 'kotlin')
+            path = m.group('arg') or template_to_path(m.group('path'), 'kotlin')
+            if m.groupdict().get('host'):          # 주소가 적혀 있으면 함께 넘긴다. 어느 서버로 가는 호출인지 연결 단계에서 가린다
+                path = m.group('host') + path
+            elif m.group('path'):
+                lead = re.match(r'"\$\{?([A-Za-z_.]*BASE_URL)', m.group(0))
+                path = (const_url(lead.group(1), NS[u['sys']]) if lead else '') + path
             mm = re.search(r'\.(post|delete|put|patch)\(', seg[m.end():m.end() + 260])
             items.append((pos, 'http', [i, member_at(u, pos), mm.group(1).upper() if mm else 'GET', path, rid]))
 

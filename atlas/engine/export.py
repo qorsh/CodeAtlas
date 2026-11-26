@@ -76,6 +76,7 @@ RESULT = dict(
         other=[[kind, role, key, i, _m(i, mi), rule] for kind, role, key, i, mi, rule in other_ports],
         svc={sid: sorted(h.items()) for sid, h in svc_hits.items()},
         mtok={str(i): t for i, t in mirror_toks.items()},
+        hosts=host_mentions,
     ),
     stats=dict(files=sum(1 for k in file_info if k), units=len(units), members=sum(len(u['members']) for u in units), literals=n_lit,
                annotations=n_ann, string_calls=n_scall, status_sites=n_status, rule_hits=dict(rule_hits),

@@ -20,6 +20,7 @@
 """
 import argparse
 import datetime
+import fnmatch
 import glob
 import hashlib
 import json
@@ -291,13 +292,171 @@ def norm_table(name):
     return re.sub(r'[^a-z0-9]', '', name.lower())
 
 
+_URL = re.compile(r'^\s*https?://([^/?#\s]+)', re.I)
+_NOISE_HOST = re.compile(r'^(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]|www\.w3\.org|schemas\..*|xmlns\..*|json-schema\.org|.*\.apache\.org|github\.com|.*\.githubusercontent\.com)(:\d+)?$')
+
+
+def norm_host(h):
+    h = h.lower().rstrip('.')
+    return re.sub(r':(80|443)$', '', h.split('@')[-1])
+
+
+def host_match(host, patterns):
+    """설정에 적은 주소와 코드에 적힌 주소가 같은가. 포트를 안 적었으면 어느 포트든 맞고, *.example.com 같은 꼴도 받는다."""
+    bare = host.split(':')[0]
+    return any(fnmatch.fnmatchcase(host, p) or fnmatch.fnmatchcase(bare, p) for p in (norm_host(x) for x in patterns))
+
+
+def glob_segs(pattern, segs):
+    """/erp/** 같은 경로 꼴이 경로 조각들과 맞는가. * 는 조각 하나, ** 는 나머지 전부."""
+    ps = [g for g in pattern.strip('/').split('/') if g != '']
+    for i, g in enumerate(ps):
+        if g == '**':
+            return True
+        if i >= len(segs) or (g != '*' and not fnmatch.fnmatchcase(segs[i], g)):
+            return False
+    return len(ps) == len(segs)
+
+
+def resolve_calls(cfg, units, routes, http, hosts):
+    """API 호출 후보마다 대상을 정한다. 근거가 강한 순서:
+
+      레거시 선언   설정의 external 에 적은 주소·경로 꼴·클라이언트 이름에 맞으면 그 시스템으로 (지도 안 서버와 경로가 겹쳐도 선언이 이긴다)
+      주소          호출에 적힌 주소가 어느 서버의 hosts 에 있으면 그 서버 안에서만 찾는다
+      하나뿐        경로가 맞는 서버가 하나뿐이다
+      설정          link.calls[부르는 시스템] 에 적힌 순서로 고른다 · link.never[부르는 시스템] 은 후보에서 뺀다
+      자기 자신     경로만 쓴 호출이고 자기 시스템에 그 라우트가 있다
+      언급한 주소   부르는 시스템의 코드에 적힌 주소(기준 주소 상수 등)의 주인이 후보 가운데 하나뿐이다
+      같은 저장소   후보 가운데 같은 소스에 든 서버가 하나뿐이다
+      주로 부르는 서버   이 시스템의 다른 호출이 몰리는 서버 (추정으로 표시)
+    여기까지 와도 못 정하면 선을 긋지 않고 '확인이 필요한 호출'로 남긴다."""
+    L = cfg.get('link', {})
+    ext_cfg = cfg.get('external', [])
+    src_of = {s['id']: s['source'] for s in cfg['systems']}
+    owners = [(s['id'], s.get('hosts', [])) for s in cfg['systems'] if s.get('hosts')]
+    by_sys = {}
+    for r in routes:
+        by_sys.setdefault(units[r['unit']]['sys'], []).append(r)
+    for s in cfg['systems']:                 # 게이트웨이가 경로 앞에 붙이는 접두어: 붙은 꼴로도 맞춰 본다
+        base = by_sys.get(s['id'], [])
+        extra = [dict(r, segs=norm_path(pre) + r['segs'], pfx=1) for pre in s.get('prefix', []) for r in base]
+        if extra:
+            by_sys[s['id']] = base + extra
+    owner_of = lambda h: next((sid for sid, pats in owners if host_match(h, pats)), None)
+
+    file_hosts = {}                # (시스템, 파일) → 그 파일에 적힌 주소들. 클라이언트 클래스가 기준 주소를 필드로 들고 경로만 붙여 쓰는 꼴을 위해
+    for u, h in hosts:
+        file_hosts.setdefault((units[u]['sys'], units[u]['file']), set()).add(norm_host(h))
+
+    def off(host, cs, segs):
+        o = offmap.setdefault(host, dict(host=host, n=0, systems=[], paths=[]))
+        o['n'] += 1
+        if cs not in o['systems']:
+            o['systems'].append(cs)
+        shown = '/' + '/'.join('{' + g[1:] + '}' if g.startswith(':') else g for g in segs)
+        if shown not in o['paths'] and len(o['paths']) < 5:
+            o['paths'].append(shown)
+
+    resolved, pending, external, offmap, how_n, seen = [], [], {}, {}, {}, set()
+    first, learned = [], {}
+    for u, mi, method, path, rule, pos in http:
+        if (u, pos) in seen:          # 같은 자리를 여러 규칙이 잡았으면 한 번만 센다
+            continue
+        seen.add((u, pos))
+        mh = _URL.match(path)
+        host, segs, cs = (norm_host(mh.group(1)) if mh else None), norm_path(path), units[u]['sys']
+        if host and re.search(r'[{}$%:]', host.split(':')[0]):       # 주소 자리가 변수로 채워진 꼴은 주소로 보지 않는다
+            host = None
+        x = next((x for x in ext_cfg if host and host_match(host, x.get('hosts', []))), None)
+        owner = owner_of(host) if host and not x else None
+        if not x and not owner:
+            x = next((x for x in ext_cfg if (x.get('clients') and re.search(x['clients'], units[u]['name'])) or any(glob_segs(p, segs) for p in x.get('paths', []))), None)
+        if x:
+            external.setdefault(x['id'], []).append((u, mi, method, segs, rule))
+            how_n['external'] = how_n.get('external', 0) + 1
+            continue
+        per = {}
+        for sid, rs in by_sys.items():
+            if (owner and sid != owner) or sid in L.get('never', {}).get(cs, []):
+                continue
+            r = match_route(rs, method, segs)
+            if r and r['unit'] != u:
+                per[sid] = r
+        if not per:
+            if host and not owner and not _NOISE_HOST.match(host):
+                off(host, cs, segs)
+            elif not host and not rule.startswith('client-'):      # 경로만 쓴 호출인데 지도 안에 맞는 서버가 없다: 같은 파일에 적힌 주소가 하나면 그리로 가는 것으로 본다
+                fh = [h for h in file_hosts.get((cs, units[u]['file']), ()) if not _NOISE_HOST.match(h) and not owner_of(h)]
+                xs = [x for x in ext_cfg if any(host_match(h, x.get('hosts', [])) for h in fh)]
+                if len(xs) == 1:
+                    external.setdefault(xs[0]['id'], []).append((u, mi, method, segs, rule))
+                    how_n['external'] = how_n.get('external', 0) + 1
+                elif not xs and len(fh) == 1:
+                    off(fh[0], cs, segs)
+            continue
+        first.append((u, mi, method, path, rule, host, owner, per))
+        if len(per) == 1 and host and not owner:
+            learned.setdefault(host, set()).add(next(iter(per)))
+    learned = {h: next(iter(v)) for h, v in learned.items() if len(v) == 1}       # 주소가 적힌 호출이 한 서버로만 간 주소
+    mentioned, seen_hosts = {}, {}
+    for u, h in hosts:
+        h = norm_host(h)
+        sid = owner_of(h) or learned.get(h)
+        if sid:
+            mentioned.setdefault(units[u]['sys'], set()).add(sid)
+        ext = next((x['id'] for x in ext_cfg if host_match(h, x.get('hosts', []))), None)
+        if not _NOISE_HOST.match(h):
+            e = seen_hosts.setdefault(h, dict(host=h, systems=[], owner=owner_of(h) or ext or ''))
+            if units[u]['sys'] not in e['systems']:
+                e['systems'].append(units[u]['sys'])
+    aff = {}
+    for u, mi, method, path, rule, host, owner, per in first:
+        if len(per) == 1:
+            k = (units[u]['sys'], next(iter(per)))
+            aff[k] = aff.get(k, 0) + 1
+    for u, mi, method, path, rule, host, owner, per in first:
+        cs, pick, how = units[u]['sys'], None, None
+        if len(per) == 1:
+            pick, how = next(iter(per)), 'host' if owner else 'unique'
+        if not pick:
+            pick, how = next(((sid, 'calls') for sid in L.get('calls', {}).get(cs, []) if sid in per), (None, None))
+        if not pick and not host and cs in per:
+            pick, how = cs, 'self'
+        if not pick and host and learned.get(host) in per:
+            pick, how = learned[host], 'host'
+        if not pick:
+            m = [sid for sid in per if sid in mentioned.get(cs, ())]
+            if len(m) == 1:
+                pick, how = m[0], 'mention'
+        if not pick:
+            m = [sid for sid in per if src_of.get(sid) == src_of.get(cs)]
+            if len(m) == 1:
+                pick, how = m[0], 'source'
+        if not pick:
+            rank = sorted(per, key=lambda sid: -aff.get((cs, sid), 0))
+            top, second = aff.get((cs, rank[0]), 0), aff.get((cs, rank[1]), 0)
+            if top and top >= 3 * second:
+                pick, how = rank[0], 'affinity'
+        if pick:
+            resolved.append((u, mi, rule, per[pick], how))
+            how_n[how] = how_n.get(how, 0) + 1
+        else:
+            pending.append((u, mi, method, path, rule, per))
+    # 같은 서버를 두 번 넣은 것으로 보이는 쌍: 라우트 목록이 통째로 같다
+    sets = {sid: frozenset((r['method'], tuple(':' if g.startswith(':') else g for g in r['segs'])) for r in rs if not r.get('pfx')) for sid, rs in by_sys.items()}
+    ids = sorted(sid for sid, v in sets.items() if len(v) >= 3)
+    twins = [[a, b] for i, a in enumerate(ids) for b in ids[i + 1:] if sets[a] == sets[b]]
+    return dict(resolved=resolved, pending=pending, external=external, how=how_n, twins=twins,
+                offmap=sorted(offmap.values(), key=lambda o: -o['n']), hosts_seen=sorted(seen_hosts.values(), key=lambda e: (not e['owner'], e['host'])))
+
+
 def link(cfg, results, sources, rules):
     """묶음 결과들을 하나로 합치고 시스템 사이의 선을 만든다. results: [(묶음, 결과)] (설정 순서)."""
     L = cfg.get('link', {})
     sysmap = {s['id']: s for s in cfg['systems']}
     lang_of = lambda u: sysmap[u['sys']]['lang'] if u['sys'] in sysmap else '-'
     ns_of = lambda u: sysmap[u['sys']].get('ns', u['sys']) if u['sys'] in sysmap else u['sys']
-    units, edges, routes, http, dbacc, tables, others, svc, mtok = [], [], [], [], [], [], [], {}, {}
+    units, edges, routes, http, dbacc, tables, others, svc, mtok, hosts = [], [], [], [], [], [], [], {}, {}, []
     for group, res in results:
         off = len(units)
         for u in res['units']:
@@ -317,19 +476,17 @@ def link(cfg, results, sources, rules):
         for sid, hits in P['svc'].items():
             svc.setdefault(sid, {}).update({u + off: n for u, n in hits})
         mtok.update({int(u) + off: t for u, t in P['mtok'].items()})
+        hosts += [[u + off, h] for u, h in P.get('hosts', [])]
     n_code = len(units)
 
-    # API: 호출 후보 ↔ 제공 라우트
-    agg, seen = {}, set()
-    for u, mi, method, path, rule, pos in http:
-        if (u, pos) in seen:          # 같은 자리를 여러 규칙이 잡았으면 한 번만 센다
-            continue
-        seen.add((u, pos))
-        r = match_route(routes, method, norm_path(path))
-        if not r or r['unit'] == u:
-            continue
-        a = agg.setdefault((u, r['unit']), dict(w=0, routes=[], rules=[]))
+    # API: 호출 후보 ↔ 제공 라우트. 한 지도에 서버가 여럿이면 경로만으로는 대상을 정할 수 없어, 근거가 강한 순서로 가린다 (resolve_calls 설명 참고)
+    ext_cfg = cfg.get('external', [])
+    api = resolve_calls(cfg, units, routes, http, hosts)
+    agg = {}
+    for u, mi, rule, r, how in api['resolved']:
+        a = agg.setdefault((u, r['unit']), dict(w=0, routes=[], rules=[], sure=0))
         a['w'] += 1
+        a['sure'] += how != 'affinity'
         label = f"{r['method']} {r['path']}"
         if label not in a['routes']:
             a['routes'].append(label)
@@ -397,6 +554,32 @@ def link(cfg, results, sources, rules):
                               file='', line=0, loc=0, doc=S.get('desc', ''), src=''))
             for i, n in hits:
                 svc_edges[(i, ui)] = n
+    # 소스 없는 시스템(레거시 등): 시스템마다 유닛 하나. 우리 코드가 부르는 API 가 멤버가 되고, 부르는 쪽에서 선이 온다
+    ext_edges = {}
+    for x in ext_cfg:
+        ui, members, seen = len(units), [], {}
+        for u, mi, method, segs, rule in api['external'].get(x['id'], []):
+            shown = f"{method} /" + '/'.join('{' + g[1:] + '}' if g.startswith(':') else g for g in segs)
+            key = (method, tuple(':' if g.startswith(':') else g for g in segs))
+            if key not in seen:
+                seen[key] = len(members)
+                members.append(dict(n=shown, s=shown, l=0, e=0, route=shown))
+            label = members[seen[key]]['route']
+            d = ext_edges.setdefault((u, ui), dict(w=0, routes=[], rules=[]))
+            d['w'] += 1
+            if label not in d['routes']:
+                d['routes'].append(label)
+            if rule not in d['rules']:
+                d['rules'].append(rule)
+            if mi is not None:
+                lst = units[u]['m'][mi].setdefault('h', [])
+                if [ui, seen[key], label] not in lst:
+                    lst.append([ui, seen[key], label])
+        rec = dict(rt='unit', i=ui, id=f"{x['id']}:api", sys=x['id'], mod='외부 API', name=x.get('name', x['id']), kind='service', decl='external', file='', line=0, loc=0,
+                   doc=x.get('desc') or '소스가 없는 시스템. 우리 코드가 이쪽으로 보내는 요청만 보인다.', src='')
+        if members:
+            rec['m'] = members[:120]
+        units.append(rec)
     # 플랫폼 간 대응 구현: 주석이 다른 묶음의 이름을 가리키거나, 지정한 시스템 쌍에서 타입 이름이 같을 때
     MS = set(L.get('mirror_systems') or [s['id'] for s in cfg['systems'] if s['lang'] not in ('prisma',)])
     mirror, all_names = {}, {}
@@ -431,7 +614,9 @@ def link(cfg, results, sources, rules):
                         mirror[(i, t)] = 'name'
 
     for (s, t), a in agg.items():
-        edges.append(dict(s=s, t=t, k='http', w=a['w'], routes=a['routes'], by=a['rules']))
+        edges.append(dict(s=s, t=t, k='http', w=a['w'], routes=a['routes'], by=a['rules'], **({} if a['sure'] else {'guess': 1})))
+    for (s, t), d in ext_edges.items():
+        edges.append(dict(s=s, t=t, k='http', w=d['w'], routes=d['routes'], by=d['rules']))
     for (s, t), d in db_edges.items():
         edges.append(dict(s=s, t=t, k='db', w=d['r'] + d['w'], ops=('r' if d['r'] else '') + ('w' if d['w'] else ''), by=d['rules']))
     for (s, t), d in msg.items():
@@ -442,14 +627,26 @@ def link(cfg, results, sources, rules):
         edges.append(dict(s=s, t=t, k='mirror', w=1, how=how))
 
     used = set(u['sys'] for u in units)
-    systems = [dict(id=s['id'], name=s['name'], sub=s.get('sub', ''), source=s['source']) for s in cfg['systems']] + [p for p in PSEUDO]
+    systems = ([dict(id=s['id'], name=s['name'], sub=s.get('sub', ''), source=s['source']) for s in cfg['systems']]
+               + [dict(id=x['id'], name=x.get('name', x['id']), sub=x.get('sub') or '소스 없음 · 보내는 요청만 표시', source='', ext=True) for x in ext_cfg] + [p for p in PSEUDO])
+    sys_name = {s['id']: s['name'] for s in systems}
+    pending = [dict(u=u, m=mi, call=f"{method} /" + '/'.join('{' + g[1:] + '}' if g.startswith(':') else g for g in norm_path(path)),
+                    cands=[[sid, r['unit'], r['member'], f"{r['method']} {r['path']}"] for sid, r in per.items()]) for u, mi, method, path, rule, per in api['pending']]
     first = sources[0] if sources else {}
     meta = dict(rt='meta', repo=cfg.get('name', ''), systems=systems, sources=sources, analyzed=datetime.date.today().isoformat(),
                 commit=first.get('commit', ''), branch=first.get('branch', ''), commit_date=first.get('commit_date', ''), dirty=first.get('dirty', False))
+    if pending:
+        meta['pending'] = pending[:300]          # 대상을 정하지 못한 호출. 틀린 선을 긋지 않고 사람이 고르게 둔다
+    if api['offmap']:
+        meta['offmap'] = api['offmap'][:60]      # 지도에 없는 주소로 가는 호출. 레거시로 등록할 후보
+    if api['hosts_seen']:
+        meta['hosts_seen'] = api['hosts_seen'][:120]
     open_routes = [r for r in routes if not any(e['k'] == 'http' and e['t'] == r['unit'] and f"{r['method']} {r['path']}" in e['routes'] for e in edges)]
     summary = dict(units=len(units), members=sum(len(u.get('m', [])) for u in units), edges=len(edges),
                    by_kind={k: sum(1 for e in edges if e['k'] == k) for k in sorted(set(e['k'] for e in edges))},
                    routes=len(routes), open_routes=len(open_routes), http_candidates=len(http),
+                   resolved=api['how'], pending=len(pending), offmap=len(api['offmap']), twins=api['twins'],
+                   external={x['id']: dict(calls=len(api['external'].get(x['id'], [])), name=x.get('name', x['id'])) for x in ext_cfg},
                    unmatched_db=sum(1 for x in dbacc if not any(k[1] == norm_table(x[3]) for k in table_idx)))
     return [meta] + units + [dict(rt='edge', **e) for e in edges], summary
 
@@ -548,6 +745,17 @@ def cmd_sync(cfg, args):
         print(f"  건너뜀 {x['id']}: {x['lang']} 문법이 없습니다. 설치: pip install tree-sitter {x['need']}  (requirements-parsers.txt 참고)")
     print(f"결과: 유닛 {summary['units']} · 메서드 {summary['members']} · 연결 {summary['edges']} {summary['by_kind']}")
     print(f"접점: 제공 API {summary['routes']}개 중 호출자 없는 것 {summary['open_routes']}개 · 호출 후보 {summary['http_candidates']}개")
+    how, names = summary.get('resolved', {}), dict(unique='맞는 서버가 하나', host='주소', calls='설정', self='자기 시스템', mention='코드에 적힌 주소', source='같은 저장소', affinity='주로 부르는 서버(추정)', external='레거시')
+    if how:
+        print('호출 대상: ' + ' · '.join(f'{names[k]} {how[k]}' for k in names if how.get(k)) + (f" · 확인 필요 {summary['pending']}" if summary.get('pending') else ''))
+    for sid, x in summary.get('external', {}).items():
+        print(f"  레거시 {x['name']}: 이쪽으로 보내는 호출 {x['calls']}개" + ('' if x['calls'] else '  ← 맞는 호출이 없습니다. 주소(hosts)·경로 꼴(paths)을 확인하세요'))
+    if summary.get('pending'):
+        print(f"  확인 필요 {summary['pending']}개: 경로가 여러 서버에 맞아 선을 긋지 않았습니다. 화면의 '확인이 필요한 호출'에서 고르거나 설정의 link.calls 에 적어 주세요.")
+    if summary.get('offmap'):
+        print(f"  지도에 없는 주소로 가는 호출이 {summary['offmap']}곳 있습니다. 레거시라면 설정의 external 에 등록하면 지도에 나옵니다.")
+    for a, b in summary.get('twins', []):
+        print(f"  주의: {a} 와 {b} 의 API 목록이 똑같습니다. 같은 서버를 두 번 넣었다면 하나를 빼세요.")
     if unchanged:
         print(f"변경 없음. 버전 {manifest['version']} 유지 · {time.time() - t0:.1f}초")
     else:
@@ -619,18 +827,9 @@ def detect(root, name):
     return found
 
 
-def cmd_add(cfg, args):
-    target = args.target
-    is_git = bool(re.match(r'^(https?://|git@|ssh://|file://)', target)) or target.endswith('.git')
-    name = args.name or re.sub(r'\.git$', '', os.path.basename(target.rstrip('/'))).lower()
-    if any(s['name'] == name for s in cfg['sources']):
-        raise SystemExit(f'이미 등록된 소스 이름입니다: {name}')
-    src = dict(name=name, git=target, **({'branch': args.branch} if args.branch else {})) if is_git else dict(name=name, path=os.path.abspath(os.path.expanduser(target)))     # 어느 폴더에서 실행해도 같은 곳을 가리키게 절대 경로로 적는다
-    if is_git and not args.dry_run:
-        prepare_source(cfg, src)
-    root = source_root(cfg, src) if not (is_git and args.dry_run) else None
-    systems = detect(root, name) if root and os.path.isdir(root) else []
-    taken = {s['id'] for s in cfg['systems']}
+def adopt_systems(cfg, name, systems):
+    """새 소스에서 찾은 시스템에 소스 이름을 적고, 이미 있는 시스템과 id 가 겹치면 소스 이름을 앞에 붙인다."""
+    taken = {s['id'] for s in cfg['systems']} | {x['id'] for x in cfg.get('external', [])}
     for s in systems:
         s['source'] = name
         s.setdefault('ns', s['id'])
@@ -638,6 +837,23 @@ def cmd_add(cfg, args):
             s['id'] = f"{name}-{s['id']}"
             s['ns'] = f"{name}-{s['ns']}"
         taken.add(s['id'])
+    return systems
+
+
+def cmd_add(cfg, args):
+    target = args.target
+    is_git = bool(re.match(r'^(https?://|git@|ssh://|file://)', target)) or target.endswith('.git')
+    name = args.name or re.sub(r'\.git$', '', os.path.basename(target.rstrip('/'))).lower()
+    if any(s['name'] == name for s in cfg['sources']):
+        raise SystemExit(f'이미 등록된 소스 이름입니다: {name}')
+    src = dict(name=name, git=target, **({'branch': args.branch} if args.branch else {})) if is_git else dict(name=name, path=os.path.abspath(os.path.expanduser(target)))     # 어느 폴더에서 실행해도 같은 곳을 가리키게 절대 경로로 적는다
+    same = next((s['name'] for s in cfg['sources'] if (is_git and s.get('git') == target) or (not is_git and s.get('path') and os.path.realpath(s['path']) == os.path.realpath(src['path']))), None)
+    if same:
+        raise SystemExit(f'이미 추가된 소스입니다: {same}. 같은 서버는 한 번만 넣어야 지도에 하나로 나옵니다.')
+    if is_git and not args.dry_run:
+        prepare_source(cfg, src)
+    root = source_root(cfg, src) if not (is_git and args.dry_run) else None
+    systems = adopt_systems(cfg, name, detect(root, name) if root and os.path.isdir(root) else [])
     table = language_table(cfg.get('parser', 'auto'))
     note = lambda lang: '   ← 어댑터 없음: 분석에서 빠짐' if lang not in table else f"   ← 문법 없음: pip install tree-sitter {table[lang].split(': ')[1]} 전에는 건너뜀" if table[lang].startswith('문법 없음') else ''
     print(f"소스 {name}: {'git ' + target if is_git else root}")
@@ -903,9 +1119,185 @@ def cmd_ingest(cfg, args):
 
 
 def make_server(cfg, port=0):
-    """작업 공간의 지도를 보여 줄 로컬 서버. 이 컴퓨터(127.0.0.1)에서만 열리고, 데이터 파일은 작업 공간에서 바로 읽어 sync 결과가 곧장 보인다."""
+    """작업 공간의 지도를 보여 줄 로컬 서버. 이 컴퓨터(127.0.0.1)에서만 열리고, 데이터 파일은 작업 공간에서 바로 읽어 sync 결과가 곧장 보인다.
+
+    /api/… 는 화면의 설정 패널이 쓰는 주소다(폴더 추가, 레거시 등록, 부르는 서버 지정, 배치 저장, 다시 분석).
+    다른 웹 페이지가 이 주소를 몰래 부르지 못하게, 서버를 띄울 때 만든 토큰을 요청마다 확인하고 Host 가 이 컴퓨터인지도 본다.
+    토큰은 /api/state 로만 내주는데, 다른 출처의 페이지는 그 응답을 읽을 수 없다."""
     import http.server
-    site, live = os.path.join(cfg['_dir'], 'site'), os.path.join(cfg['_dir'], cfg.get('out', '.'))
+    import secrets
+    import threading
+    site, live, cfg_path = os.path.join(cfg['_dir'], 'site'), os.path.join(cfg['_dir'], cfg.get('out', '.')), cfg['_path']
+    token, lock = secrets.token_urlsafe(18), threading.Lock()
+    job = dict(running=False, kind='', log=[], rc=None)
+
+    def run_job(kind, argv):
+        with lock:
+            if job['running']:
+                raise SystemExit('이미 실행 중인 작업이 있습니다.')
+            job.update(running=True, kind=kind, log=[], rc=None)
+
+        def work():
+            try:
+                p = subprocess.Popen([sys.executable, os.path.abspath(__file__), '--config', cfg_path, *argv], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                for line in p.stdout:
+                    job['log'].append(line.rstrip())
+                    del job['log'][:-200]
+                job['rc'] = p.wait()
+            except Exception as e:           # 실행 자체가 안 된 경우도 화면에 보이게 남긴다
+                job['log'].append(str(e))
+                job['rc'] = 1
+            job['running'] = False
+        threading.Thread(target=work, daemon=True).start()
+        return dict(started=True)
+
+    def state():
+        c = load_config(cfg_path)
+        mpath = os.path.join(live, 'atlas-manifest.json')
+        man = json.load(open(mpath, encoding='utf-8')) if os.path.exists(mpath) else {}
+        table = language_table(c.get('parser', 'auto'))
+        return dict(token=token, name=c.get('name', ''), home=os.path.expanduser('~'),
+                    sources=[dict(name=x['name'], path=x.get('path', ''), git=x.get('git', ''), systems=[y['id'] for y in c['systems'] if y['source'] == x['name']]) for x in c['sources']],
+                    systems=[dict(id=y['id'], name=y['name'], sub=y.get('sub', ''), lang=y['lang'], source=y['source'], hosts=y.get('hosts', []), prefix=y.get('prefix', []),
+                                  skipped=table.get(y['lang'], '').startswith('문법 없음')) for y in c['systems']],
+                    external=c.get('external', []), link=dict(calls=c['link'].get('calls', {}), never=c['link'].get('never', {})),
+                    built_at=man.get('built_at', ''), version=man.get('version', ''), summary=man.get('summary', {}), job=dict(job, log=job['log'][-60:]))
+
+    def words(v, limit=30):
+        """화면에서 온 목록 값: 문자열 목록이나 쉼표로 나눈 문자열을 받아 깨끗한 목록으로."""
+        items = v if isinstance(v, list) else re.split(r'[,\n]', str(v or ''))
+        return [str(x).strip()[:200] for x in items if str(x).strip()][:limit]
+
+    def api(name, body):
+        c = load_config(cfg_path)
+        if name == 'job':
+            return dict(job, log=job['log'][-60:])
+        if name == 'ls':                      # 폴더 고르기: 이름만 내준다. 파일 내용은 읽지 않는다
+            path = os.path.abspath(os.path.expanduser(str(body.get('path') or '~')))
+            if body.get('child'):
+                path = os.path.join(path, os.path.basename(str(body['child'])))
+            if not os.path.isdir(path):
+                raise SystemExit(f'폴더가 아닙니다: {path}')
+            try:
+                names = sorted(os.listdir(path), key=str.lower)
+            except OSError as e:
+                raise SystemExit(f'이 폴더를 열 수 없습니다: {e.strerror}')
+            names = [n for n in names if not n.startswith('.')]
+            out = dict(path=path, parent=os.path.dirname(path) if os.path.dirname(path) != path else '', dirs=[n for n in names if os.path.isdir(os.path.join(path, n))][:600])
+            if body.get('files'):
+                out['files'] = [n for n in names if os.path.isfile(os.path.join(path, n))][:600]
+            return out
+        if name == 'add':                     # 폴더를 소스로 추가. dry_run 이면 무엇을 알아보는지만 돌려준다
+            target = os.path.abspath(os.path.expanduser(str(body.get('path') or '')))
+            if not os.path.isdir(target):
+                raise SystemExit(f'폴더가 아닙니다: {target}')
+            same = next((x['name'] for x in c['sources'] if x.get('path') and os.path.realpath(x['path']) == os.path.realpath(target)), None)
+            if same:
+                raise SystemExit(f'이미 추가된 폴더입니다: {same}. 같은 서버는 한 번만 넣어야 지도에 하나로 나옵니다.')
+            base = re.sub(r'[^a-z0-9._-]+', '-', str(body.get('name') or os.path.basename(target)).lower()).strip('-') or 'source'
+            sname, k = base, 2
+            while any(x['name'] == sname for x in c['sources']):
+                sname, k = f'{base}-{k}', k + 1
+            table = language_table(c.get('parser', 'auto'))
+            systems = adopt_systems(c, sname, detect(target, sname))
+            shown = [dict(id=y['id'], name=y['name'], sub=y.get('sub', ''), lang=y['lang'], roots=y['roots'][:4],
+                          note='어댑터 없음: 분석에서 빠짐' if y['lang'] not in table else '문법 패키지 없음: 설치 전에는 건너뜀' if table[y['lang']].startswith('문법 없음') else '') for y in systems]
+            if not body.get('dry_run'):
+                if not systems:
+                    raise SystemExit('이 폴더에서 알아볼 수 있는 시스템이 없습니다.')
+                c['sources'].append(dict(name=sname, path=target))
+                c['systems'] += [y for y in systems if y['lang'] in table]
+                save_config(c)
+            return dict(source=sname, path=target, systems=shown, added=not body.get('dry_run'))
+        if name == 'remove':                  # 소스 빼기: 설정에서만 뺀다. 폴더와 그 안의 파일은 건드리지 않는다
+            sname = str(body.get('source') or '')
+            gone = {y['id'] for y in c['systems'] if y['source'] == sname}
+            if not any(x['name'] == sname for x in c['sources']):
+                raise SystemExit(f'없는 소스입니다: {sname}')
+            c['sources'] = [x for x in c['sources'] if x['name'] != sname]
+            c['systems'] = [y for y in c['systems'] if y['source'] != sname]
+            for key in ('calls', 'never'):
+                c['link'][key] = {k: [t for t in v if t not in gone] for k, v in c['link'].get(key, {}).items() if k not in gone}
+            save_config(c)
+            return dict(removed=sorted(gone))
+        if name == 'system':                  # 시스템 이름·주소·경로 접두어 고치기
+            y = next((y for y in c['systems'] if y['id'] == body.get('id')), None)
+            if not y:
+                raise SystemExit('없는 시스템입니다.')
+            if str(body.get('name') or '').strip():
+                y['name'] = str(body['name']).strip()[:80]
+            for key in ('hosts', 'prefix'):
+                if key in body:
+                    y[key] = words(body[key])
+                    if not y[key]:
+                        del y[key]
+            save_config(c)
+            return dict(ok=True)
+        if name == 'external':                # 소스 없는 시스템(레거시) 등록·수정·삭제
+            ext = c.setdefault('external', [])
+            if body.get('remove'):
+                c['external'] = [x for x in ext if x['id'] != body['remove']]
+                for key in ('calls', 'never'):
+                    c['link'][key] = {k: [t for t in v if t != body['remove']] for k, v in c['link'].get(key, {}).items()}
+                save_config(c)
+                return dict(ok=True)
+            label = str(body.get('name') or '').strip()[:80]
+            hosts, paths, clients = words(body.get('hosts')), words(body.get('paths')), str(body.get('clients') or '').strip()[:200]
+            if not label:
+                raise SystemExit('이름을 적어 주세요.')
+            if not (hosts or paths or clients):
+                raise SystemExit('주소, 경로 꼴, 클라이언트 이름 가운데 하나는 적어야 어떤 호출이 이 시스템으로 가는지 알 수 있습니다.')
+            if clients:
+                try:
+                    re.compile(clients)
+                except re.error as e:
+                    raise SystemExit(f'클라이언트 이름 꼴이 정규식으로 읽히지 않습니다: {e}')
+            x = next((x for x in ext if x['id'] == body.get('id')), None)
+            if not x:
+                base = re.sub(r'[^a-z0-9]+', '-', label.lower()).strip('-') or 'legacy'
+                xid, k, taken = base, 2, {y['id'] for y in c['systems']} | {x['id'] for x in ext} | {'device', 'cloud'}
+                while xid in taken:
+                    xid, k = f'{base}-{k}', k + 1
+                x = dict(id=xid)
+                ext.append(x)
+            x.update(name=label, hosts=hosts, paths=paths, clients=clients)
+            for key in ('hosts', 'paths', 'clients'):
+                if not x[key]:
+                    del x[key]
+            save_config(c)
+            return dict(id=x['id'])
+        if name == 'link':                    # 애매한 호출을 어느 서버로 볼지(calls), 잇지 않을 서버(never)
+            a, b, mode, ids = str(body.get('from') or ''), str(body.get('to') or ''), body.get('mode'), {y['id'] for y in c['systems']} | {x['id'] for x in c.get('external', [])}
+            if a not in ids or (mode != 'clear' and b not in ids):
+                raise SystemExit('없는 시스템입니다.')
+            for key in ('calls', 'never'):
+                cur = [t for t in c['link'].setdefault(key, {}).get(a, []) if t != b and mode != 'clear']
+                if key == mode:
+                    cur.insert(0, b)
+                if cur:
+                    c['link'][key][a] = cur
+                else:
+                    c['link'][key].pop(a, None)
+            save_config(c)
+            return dict(ok=True)
+        if name == 'layout':                  # 화면에서 옮긴 시스템 자리: 작업 공간 메모에 적어 같이 쓰는 사람에게도 같은 배치로 보이게 한다
+            npath = os.path.join(live, 'atlas-notes.json')
+            notes = json.load(open(npath, encoding='utf-8')) if os.path.exists(npath) else {}
+            pos = {str(k)[:120]: [float(v[0]), float(v[1])] for k, v in (body.get('positions') or {}).items() if isinstance(v, list) and len(v) == 2}
+            if pos:
+                notes['positions'] = pos
+            else:
+                notes.pop('positions', None)
+            write_atomic(npath, json.dumps(notes, ensure_ascii=False, indent=1))
+            return dict(saved=len(pos))
+        if name == 'sync':
+            return run_job('sync', ['sync'] + ([] if any(x.get('git') for x in c['sources']) else ['--no-fetch']))
+        if name == 'ingest':
+            path = os.path.abspath(os.path.expanduser(str(body.get('path') or '')))
+            if not os.path.isfile(path):
+                raise SystemExit(f'파일이 아닙니다: {path}')
+            return run_job('ingest', ['ingest', path])
+        raise SystemExit('모르는 요청입니다.')
 
     class Handler(http.server.SimpleHTTPRequestHandler):
         def __init__(self, *a, **k):
@@ -924,13 +1316,50 @@ def make_server(cfg, port=0):
         def log_message(self, *a):
             pass
 
+        def reply(self, code, obj):
+            body = json.dumps(obj, ensure_ascii=False).encode()
+            self.send_response(code)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def local(self):
+            return (self.headers.get('Host') or '').rsplit(':', 1)[0] in ('127.0.0.1', 'localhost')
+
+        def do_GET(self):
+            path = self.path.split('?')[0]
+            if not path.startswith('/api/'):
+                return super().do_GET()
+            if not self.local():
+                return self.reply(403, dict(error='이 컴퓨터에서 연 화면만 쓸 수 있습니다.'))
+            if path == '/api/state':
+                return self.reply(200, state())
+            return self.reply(404, dict(error='모르는 요청입니다.'))
+
+        def do_POST(self):
+            path = self.path.split('?')[0]
+            if not path.startswith('/api/') or not self.local() or not secrets.compare_digest(self.headers.get('X-Atlas-Token') or '', token):
+                return self.reply(403, dict(error='허용되지 않은 요청입니다.'))
+            try:
+                n = int(self.headers.get('Content-Length') or 0)
+                body = json.loads(self.rfile.read(n) or b'{}') if 0 < n <= 2_000_000 else {}
+                self.reply(200, api(path[5:], body if isinstance(body, dict) else {}))
+            except SystemExit as e:
+                self.reply(400, dict(error=str(e)))
+            except Exception as e:
+                self.reply(400, dict(error=f'{type(e).__name__}: {e}'))
+
     httpd = http.server.ThreadingHTTPServer(('127.0.0.1', port), Handler)
     return httpd, f'http://127.0.0.1:{httpd.server_address[1]}/'
 
 
 def cmd_open(cfg, args):
     if not os.path.exists(os.path.join(cfg['_dir'], cfg.get('out', '.'), 'atlas-data.json')):
-        raise SystemExit('아직 분석 결과가 없습니다. 먼저 sync 를 실행하세요.')
+        if cfg['systems']:
+            raise SystemExit('아직 분석 결과가 없습니다. 먼저 sync 를 실행하세요.')
+        args.no_fetch, args.pull, args.force = True, False, False       # 빈 작업 공간: 빈 지도를 만들어 열고, 폴더 추가는 화면에서 한다
+        cmd_sync(cfg, args)
     args.viewer = args.out = None
     cmd_site(cfg, args)
     httpd, url = make_server(cfg, args.port)

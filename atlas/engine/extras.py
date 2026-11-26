@@ -105,3 +105,19 @@ for i, u in enumerate(units):
                 n_lit += 1
     if unit_lits:
         u['x'] = unit_lits
+
+# ───────────────────────────── 6) 코드에 적힌 서버 주소 ─────────────────────────────
+# "https://api.example.com" 처럼 문자열에 적힌 주소에서 호스트만 모은다. 경로만 쓰는 호출이 어느 서버로 가는지 가릴 때 단서가 된다.
+URL_HOST = re.compile(r'https?://([A-Za-z0-9](?:[A-Za-z0-9.\-]*[A-Za-z0-9])?(?::\d{2,5})?)(?![A-Za-z0-9.\-]*[{$%])')
+host_mentions = []     # [unit, host]
+for i, u in enumerate(units):
+    if not u['file'] or is_schema(u):
+        continue
+    fi = file_info[u['file']]
+    seen_hosts = set()
+    for a, b in u['ranges']:
+        for m in URL_HOST.finditer(fi['src'], a, b + 1):
+            h = m.group(1).lower()
+            if h not in seen_hosts and not in_comment(fi, m.start()):
+                seen_hosts.add(h)
+                host_mentions.append([i, h])

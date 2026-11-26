@@ -10,7 +10,7 @@ python3 atlas/atlas.py -w <이름> init                   # 작업 공간 worksp
 python3 atlas/atlas.py -w <이름> add <폴더 | git 주소>   # 소스 추가. 종류를 감지해 설정에 적는다 (--dry-run 으로 미리보기)
 python3 atlas/atlas.py -w <이름> sync                   # 바뀐 묶음만 다시 분석하고 결과 교체
 python3 atlas/atlas.py -w <이름> status                 # 소스별 기준 커밋, 마지막 결과
-python3 atlas/atlas.py -w <이름> open                   # 이 컴퓨터에서만 열리는 서버를 띄우고 브라우저로 연다
+python3 atlas/atlas.py -w <이름> open                   # 이 컴퓨터에서만 열리는 서버를 띄우고 브라우저로 연다 (설정 패널 포함. 빈 작업 공간도 열린다)
 python3 atlas/atlas.py -w <이름> site                   # 사내 웹 서버에 올릴 정적 파일 묶음 (workspaces/<이름>/site/)
 python3 atlas/atlas.py -w <이름> ingest <접속 로그 | ->   # 실제 요청·응답을 지도에 얹는다 (--follow 로 계속 따라가기)
 ```
@@ -127,10 +127,21 @@ SITTER_SPECS['go'] = dict(
   "sources": [{"name": "app", "git": "git@host:team/app.git", "branch": "main"},
               {"name": "local", "path": "~/work/other"}],
   "systems": [{"id": "server", "name": "주문 서버", "source": "app", "lang": "java",
-               "roots": ["src/main/java"], "tests": [["src/test/java", ".java"]], "db": "orders-db"}],
-  "link": {"twins": [["android", "ios"]]}
+               "roots": ["src/main/java"], "tests": [["src/test/java", ".java"]], "db": "orders-db",
+               "hosts": ["api.example.com", "order-service"], "prefix": ["/shop"]}],
+  "external": [{"id": "erp", "name": "레거시 ERP", "hosts": ["erp.example.com"], "paths": ["/erp/**"], "clients": "Erp\\w*Client"}],
+  "link": {"twins": [["android", "ios"]], "calls": {"admin-web": ["server"]}, "never": {"admin-web": ["other-server"]}}
 }
 ```
+
+여러 제품을 한 작업 공간에 넣을 때 쓰는 것들이다. 화면의 설정 패널이 같은 값을 고친다.
+
+- `systems[].hosts`: 이 서버에 닿는 주소. 호출에 이 주소가 적혀 있으면 경로가 다른 서버와 겹쳐도 이 서버 안에서만 찾는다. 포트를 안 적으면 어느 포트든 맞고 `*.example.com` 꼴도 된다.
+- `systems[].prefix`: 게이트웨이가 경로 앞에 붙이는 접두어. `/shop/api/orders` 로 부르는 호출을 이 서버의 `/api/orders` 에 맞춘다.
+- `external`: 소스 없이 지도에 올리는 시스템(레거시). `hosts`(주소), `paths`(경로 꼴. `*` 는 조각 하나, `**` 는 나머지 전부), `clients`(호출하는 유닛 이름의 정규식) 가운데 하나라도 맞는 호출이 이쪽으로 간다. 시스템마다 유닛 하나가 생기고 우리가 부르는 API 가 멤버가 된다.
+- `link.calls`: 경로가 여러 서버에 맞을 때 고를 서버(앞에 적은 것 먼저). `link.never`: 잇지 않을 서버.
+
+호출 대상을 가리는 순서와 근거는 `atlas.py` 의 `resolve_calls` 에 적혀 있다. 끝내 못 가린 호출은 선을 긋지 않고 결과의 `meta.pending` 에 남기고, 지도에 없는 주소로 가는 호출은 `meta.offmap` 에 모은다. `sync` 출력의 "호출 대상:" 줄이 근거별 건수다.
 
 - `ns` 가 같은 시스템들은 한 묶음으로 함께 분석된다(서로 이름을 풀 수 있다).
 - `module` 은 폴더 경로를 모듈 이름으로 바꾸는 정규식 치환 목록이다. 없으면 루트 기준 상대 경로를 쓴다.
@@ -148,11 +159,12 @@ SITTER_SPECS['go'] = dict(
                  "steps": [{"u": "web:api#createOrder", "d": "이 단계에서 일어나는 일"}], "kw": ["payment", "order"]}],
   "alias": {"정기결제": ["subscription", "billing"]},
   "colors": {"server": "#8FA6FF"},
-  "columns": [["ios", "android"], ["server"], ["db"]]
+  "columns": [["ios", "android"], ["server"], ["db"]],
+  "positions": {"server": [5200, -800]}
 }
 ```
 
-`columns` 는 시스템을 놓을 열을 직접 정한다. 없으면 시스템 사이의 연결 방향(부르는 쪽 → 불리는 쪽)으로 자동 배치한다.
+`columns` 는 시스템을 놓을 열을 직접 정한다. 없으면 시스템 사이의 연결 방향(부르는 쪽 → 불리는 쪽)으로 자동 배치한다. `positions` 는 화면에서 시스템 상자를 끌어 옮기면 적히는 자리다(`open` 으로 열었을 때. 정적 파일로 올린 화면에서는 그 브라우저에만 저장된다). 자리가 없는 시스템은 자동 배치를 따르되, 옮겨 둔 시스템과 겹치면 아래로 비켜 놓인다.
 
 유닛은 `시스템id:유닛이름`, 메서드는 `#메서드이름`, API 는 `@GET /경로` 로 가리킨다. `type` 은 `q`(문의), `fix`(수정 요청), `err`(오류) 중 하나다.
 
@@ -185,14 +197,15 @@ SITTER_SPECS['go'] = dict(
 
 - 내장 파서는 주석·문자열 제거와 괄호·들여쓰기 구조에 기댄 근사 분석이다. 매크로, 리플렉션, 의존성 주입 설정처럼 문법에 드러나지 않는 연결은 놓친다.
 - Swift, Kotlin, TypeScript/JavaScript 는 아직 내장 파서로만 읽는다. tree-sitter 명세를 더하면 바꿀 수 있지만, 기존 결과와 달라지는 곳을 `tests/parser_parity.py` 로 확인한 뒤에 바꿔야 한다.
-- 주소를 변수에 담아 두었다가 다른 줄에서 호출하는 코드(`url := ...; http.Get(url)`)는 호출과 주소를 잇지 못한다. 값의 흐름은 따라가지 않는다.
+- 주소를 변수에 담아 두었다가 다른 줄에서 호출하는 코드(`url := ...; http.Get(url)`)는 호출과 주소를 잇지 못한다. 값의 흐름은 따라가지 않는다. 다만 `{BASE}/x` · `${BASE}/x` · `$BASE_URL/x` 처럼 문자열 맨 앞에 놓인 이름이 같은 시스템 안의 주소 상수(`BASE = "https://…"`) 하나를 가리키면 그 주소를 붙여 준다.
+- 서버 주소가 코드에 없는 호출(환경 변수, 배포 설정)은 주소 근거 없이 가린다. 경로가 여러 서버에 맞고 다른 근거도 없으면 "확인이 필요한 호출"로 남는다.
 - 실측 응답은 접속 로그 수준이다. 서버 안의 어느 메서드에서 실패했는지, 요청 한 건이 시스템 사이를 어떻게 지났는지는 분산 추적 기록이 있어야 알 수 있고 아직 읽지 못한다.
 - 유닛 종류(화면·서비스·저장소 등)는 이름 끝말로 어림한다. 이름 규칙이 다른 팀에서는 종류가 덜 맞을 수 있다(연결에는 영향이 없다).
 - 규칙이 없는 프레임워크의 접점은 잡히지 않는다. `sync` 출력의 "호출자 없는 API" 수와 화면의 열린 접점이 빠진 곳을 찾는 실마리다.
 
 ## 시험
 
-`fixtures/shop/` 은 Java Spring 서버, Python FastAPI 서비스, Go 재고 서비스, React 웹, Kotlin Retrofit 앱으로 이루어진 작은 시험용 프로젝트다.
+`fixtures/shop/` 은 Java Spring 서버, Python FastAPI 서비스, Go 재고 서비스, React 웹, Kotlin Retrofit 앱으로 이루어진 작은 시험용 프로젝트다. `fixtures/booking/`(예약 서버와 웹: 쇼핑과 같은 경로의 API 가 있고, 쇼핑의 결제 서버를 함께 쓰며, 소스 없는 레거시 ERP 를 부른다)과 `fixtures/backoffice/`(겹치는 경로만 부르는 관리자 화면)는 여러 제품을 한 지도에 넣는 경우를 시험한다.
 
 ```bash
 python3 atlas/atlas.py -w shop init
@@ -202,5 +215,8 @@ python3 atlas/atlas.py -w shop ingest fixtures/shop/logs/access-nginx.txt   # �
 node tests/viewer-smoke.js code-atlas.html workspaces/shop                  # 그 결과로 화면이 끝까지 그려지는지 (좌표·응답 표시 포함)
 .venv/bin/python tests/parser_parity.py java fixtures/shop/order-service    # 내장 파서와 tree-sitter 의 결과가 같은지 (차이 0건)
 .venv/bin/python tests/parser_parity.py python fixtures/shop/payment-service
+python3 tests/link_check.py                                                 # 여러 제품을 한 지도에: 호출 대상 가리기, 확인 필요, 함께 쓰는 서버, 레거시
+python3 tests/server_check.py                                               # 설정 패널이 쓰는 로컬 서버 주소 (토큰·Host 확인 포함)
+node tests/ui-check.js /tmp/atlas-ui                                        # 실제 Chrome 으로 시스템 목록·배치 편집·설정 패널을 눌러 본다
 python3 tests/leak_check.py                                                 # 분석 대상의 내용이 저장소에 섞이지 않았는지
 ```

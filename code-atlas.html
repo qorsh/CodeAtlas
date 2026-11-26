@@ -23,6 +23,7 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--holo);outline-o
 
 #map{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:grab}
 #map.drag{cursor:grabbing}
+#map.arr{cursor:move}
 #map.point{cursor:pointer}
 
 .hud{position:fixed;inset:0;pointer-events:none;display:grid;
@@ -171,6 +172,28 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--holo);outline-o
 .rtbox{margin-top:2px;padding-top:6px;border-top:1px solid var(--line-soft);font:400 10.5px/1.5 var(--font-mono);color:var(--ink-dim);font-variant-numeric:tabular-nums}
 .rtbox b{color:#FF5A6A;font-weight:600} .rtbox .ok{color:#6CF0C6}
 .rtbox .mini-act{display:inline-block;margin:4px 6px 0 0}
+.pendbox b{color:#FFB454}
+/* 시스템 목록 · 배치 편집 */
+.level .lvnav b{color:var(--holo)}
+.navq{width:100%;background:transparent;border:1px solid var(--line);color:var(--ink);font:400 12px var(--font-mono);padding:7px 8px;outline:none}
+.navq:focus{border-color:var(--holo)}
+.srow .k{min-width:40px}
+.srow[hidden]{display:none}
+/* 설정 패널: 로컬 서버(atlas.py open)로 열었을 때만 쓴다 */
+.cfg{position:fixed;inset:0;z-index:40;background:rgba(2,8,14,.8);display:flex;justify-content:center;align-items:flex-start;overflow:auto;padding:calc(14px + env(safe-area-inset-top,0px)) 12px calc(14px + env(safe-area-inset-bottom,0px))}
+.cfg-box{width:min(780px,100%)}
+.cfg-box .side-body{overflow:visible}
+.crow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:7px 8px;border:1px solid var(--line-soft);margin-top:-1px}
+.crow .nm{flex:1 1 220px;min-width:0;font:500 12px var(--font-mono);overflow-wrap:anywhere}
+.crow .nm small{display:block;font:400 10.5px/1.5 var(--font-mono);color:var(--ink-dim)}
+.crow .mini-act,.cform .mini-act{margin-left:0;font-size:11px;padding:5px 8px;color:var(--ink-dim)}
+.cfg input[type=text]{flex:1 1 180px;min-width:0;background:transparent;border:1px solid var(--line);color:var(--ink);font:400 12px var(--font-mono);padding:7px 8px;outline:none}
+.cfg input[type=text]:focus{border-color:var(--holo)}
+.cform{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.dirs{max-height:240px;overflow:auto;border:1px solid var(--line-soft);margin:8px 0}
+.dirs button{display:block;width:100%;text-align:left;padding:6px 9px;font:400 12px var(--font-mono);color:var(--ink);border-bottom:1px solid var(--line-soft)}
+.dirs button:hover{background:var(--panel-2)}
+.log{margin:6px 0 0;padding:8px;border:1px solid var(--line-soft);font:400 10.5px/1.5 var(--font-mono);color:var(--ink-dim);white-space:pre-wrap;overflow-wrap:anywhere;max-height:180px;overflow:auto}
 .codes{display:flex;flex-wrap:wrap;gap:4px;margin-top:3px}
 .xrow .r.codes{display:flex}
 .code{font:500 10.5px/1.5 var(--font-mono);padding:0 6px;border:1px solid var(--line);color:var(--ink-dim);white-space:nowrap}
@@ -204,7 +227,7 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--holo);outline-o
   .search{grid-area:1/1} .level{grid-area:2/1;height:40px} .legend{grid-area:4/1;justify-self:stretch}
   .trace,.insp{grid-area:3/1;align-self:end;max-height:min(100%,54vh)}
   .walk{grid-area:3/1;align-self:start} .walk .wh{display:none}
-  .insp{z-index:2}
+  .insp{z-index:2;background:#061723}      /* 좁은 화면에서는 왼쪽 패널과 같은 자리에 겹치므로 비치지 않게 한다 */
 }
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
@@ -217,6 +240,7 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--holo);outline-o
     <div class="brand-id"><b id="brand-name">ATLAS</b><span>CODE ATLAS</span></div>
     <div class="brand-stats" id="stats">&nbsp;</div>
     <div class="rtbox" id="rtbox" hidden></div>
+    <div class="rtbox pendbox" id="pendbox" hidden></div>
   </header>
 
   <div class="search panel" id="search">
@@ -233,6 +257,7 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--holo);outline-o
     <button data-lv="1"><i>L2</i><b>MODULE</b></button>
     <button data-lv="2"><i>L3</i><b>CLASS</b></button>
     <button data-lv="3"><i>L4</i><b>METHOD</b></button>
+    <button data-act="nav" class="lvnav" aria-label="시스템 목록 열기"><i>GO</i><b>시스템</b></button>
   </nav>
 
   <aside class="trace side panel" id="trace" hidden></aside>
@@ -243,6 +268,7 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--holo);outline-o
   <div class="legend panel" id="legend" role="group" aria-label="연결 종류 표시"></div>
   <div class="status panel"><div id="status">&nbsp;</div><div class="scale" id="scale" role="group" aria-label="규모 시험"><span>규모 시험</span><button data-scale="1" aria-pressed="true">×1</button><button data-scale="10" aria-pressed="false">×10</button><button data-scale="30" aria-pressed="false">×30</button></div></div>
 </div>
+<div class="cfg" id="cfg" hidden><div class="cfg-box panel" id="cfgbox"></div></div>
 <div id="tip" hidden></div>
 
 <script>
@@ -252,8 +278,9 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--holo);outline-o
    atlas-notes.json 이 데이터 옆에 있으면 읽는다. 분석 대상에 대한 내용(사람이 쓴 유닛 설명, 예시 문의, 제품 용어, 시스템 색)은
    모두 그 파일에 두고, 이 화면에는 어떤 제품의 내용도 넣지 않는다.
      {"notes": {"<유닛 id>": {"role","inp","how","out"}}, "scenarios": [{"id","type","label","q","summary","causes","steps","kw"}],
-      "alias": {"<한국어 낱말>": ["english", ...]}, "colors": {"<시스템 id>": "#RRGGBB"}, "columns": [["<시스템 id>", ...], ...]} */
-let NOTES = {}, SCENARIOS = [], WSCOLORS = {}, WSCOLS = null;
+      "alias": {"<한국어 낱말>": ["english", ...]}, "colors": {"<시스템 id>": "#RRGGBB"}, "columns": [["<시스템 id>", ...], ...],
+      "positions": {"<시스템 id>": [x, y]}}   positions 는 화면에서 시스템을 끌어 옮기면 적힌다 */
+let NOTES = {}, SCENARIOS = [], WSCOLORS = {}, WSCOLS = null, WSPOS = null;
 /* 한국어 문의를 영문 식별자 조각으로 잇는 기본 낱말. 제품 고유 용어는 atlas-notes.json 의 alias 로 더한다. */
 const ALIAS = {'로그인':['auth','login','signin','session'],'로그아웃':['logout','signout','session'],'세션':['session','token','refresh'],'토큰':['token','session'],'인증':['auth','verify','verification'],
  '가입':['signup','register','join'],'계정':['account','user','member','auth'],'탈퇴':['deletion','withdraw','account'],'회원':['member','user'],'비밀번호':['password','credential'],'권한':['permission','role','auth'],'프로필':['profile'],'닉네임':['nickname','username'],'아이디':['username','user'],
@@ -273,6 +300,7 @@ function applyNotes(d){
   const obj = x => x && typeof x === 'object' && !Array.isArray(x) ? x : {};
   NOTES = obj(d.notes); WSCOLORS = obj(d.colors);
   WSCOLS = Array.isArray(d.columns) && d.columns.every(Array.isArray) ? d.columns.map(c => c.map(String)) : null;
+  WSPOS = Object.keys(obj(d.positions)).length ? obj(d.positions) : null;
   SCENARIOS = (Array.isArray(d.scenarios) ? d.scenarios : []).filter(s => s && s.id && s.q && Array.isArray(s.steps));
   for (const [k, v] of Object.entries(obj(d.alias))) if (Array.isArray(v)) ALIAS[String(k).toLowerCase()] = v.map(String);
 }
@@ -307,12 +335,14 @@ let META, UNITS = [], EDGES = [], SYS = {}, SYSL = [], MODS = [], MODE = [], SYS
 let WORLD = {x0:0,y0:0,x1:1,y1:1};
 const byId = new Map();
 const show = {use:true, http:true, db:true, svc:true, mirror:true, msg:true, rt:true};
-const state = {sel:null, trace:null, hits:null, impact:null, hover:null, edge:null, hoverEdge:null, walk:null, min:false};
+const state = {sel:null, trace:null, hits:null, impact:null, hover:null, edge:null, hoverEdge:null, walk:null, min:false, nav:false, arrange:false};
 let focus = null, dirty = true, anim = null, inertia = null, zoomTarget = null, drawMs = 0, vis = [];
 const AI = {fn:null, state:'wait', ctl:null, timer:null, notes:{}, hist:[], noteBusy:null, noteErr:null, index:null};
 const bySlug = new Map(); let selfHash = null;
 const NAV = {hist:[], back:false}; let lastEdges = [], lastBright = [], walkTarget = null;
 let SCALE = 1, RAW = '', CLUSTER = {w:1, h:1}, loadMs = 0, frameMs = 0, lastFrameT = 0;
+let POS = null;                       // 사람이 옮겨 둔 시스템 자리 {시스템 id: [x, y]}
+const API = {ok:false, token:'', st:null};   // 로컬 서버(atlas.py open)로 열었을 때만 켜지는 설정 기능
 
 /* ───────────── 데이터 준비 ───────────── */
 function prepare(recs){
@@ -330,8 +360,9 @@ function prepare(recs){
   }
   ADJ = UNITS.map(() => []);
   for (const e of EDGES){ ADJ[e.s].push([e.t,e]); ADJ[e.t].push([e.s,e]); }
+  for (const p of META.pending || []){ const u = UNITS[p.u]; if (u && p.cands.every(c => UNITS[c[1]])) (u.pend = u.pend || []).push(p); }   // 대상을 정하지 못한 호출
   const pal = {}; let pn = 0;
-  for (const s of META.systems){ const b = s.base||s.id; if (!(b in pal)) pal[b] = WSCOLORS[b] || SYSCOL[b] || SYSPAL[pn++ % SYSPAL.length]; SYS[s.id] = {...s, mods:[], units:[], color:pal[b]}; SYSL.push(SYS[s.id]); }
+  for (const s of META.systems){ const b = s.base||s.id; if (!(b in pal)) pal[b] = WSCOLORS[b] || SYSCOL[b] || (s.ext ? '#A9B7C6' : SYSPAL[pn++ % SYSPAL.length]); SYS[s.id] = {...s, mods:[], units:[], color:pal[b]}; SYSL.push(SYS[s.id]); }
   const mm = new Map();
   for (const u of UNITS){
     const key = u.sys+'|'+u.mod; let m = mm.get(key);
@@ -414,13 +445,40 @@ function layout(){
   const gcols = clamp(Math.round(Math.sqrt(SCALE*(CLUSTER.h/CLUSTER.w)*1.6)), 1, SCALE);
   for (let k = 1; k < SCALE; k++) placeCluster(k, (k % gcols)*(CLUSTER.w + GAPC), Math.floor(k/gcols)*(CLUSTER.h + GAPC));
   SYSL = SYSL.filter(s => s.w);
-  let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
-  for (const s of SYSL){
-    for (const m of s.mods){ m.x = s.x + m.rx; m.y = s.y + m.ry; for (const u of m.units){ u.x = m.x + u.rx; u.y = m.y + u.ry; } }
-    x0 = Math.min(x0,s.x); y0 = Math.min(y0,s.y); x1 = Math.max(x1,s.x+s.w); y1 = Math.max(y1,s.y+s.h);
-  }
-  WORLD = {x0,y0,x1,y1};
+  for (const s of SYSL){ s.ax = s.x; s.ay = s.y; }       // 자동 배치 자리. '자동 정렬'로 돌아갈 때 쓴다
+  applyPositions(); placeAbs();
 }
+/* 사람이 옮겨 둔 시스템 자리를 자동 배치 위에 덮는다. 자리가 정해지지 않은 시스템(새로 추가된 것)이 옮겨 둔 시스템과 겹치면
+   겹치지 않을 때까지 아래로 내린다. 옮겨 둔 자리는 건드리지 않는다. */
+function applyPositions(){
+  for (const s of SYSL){ s.x = s.ax; s.y = s.ay; s.moved = false; }
+  if (SCALE !== 1 || !POS) return;
+  const fixed = [];
+  for (const s of SYSL){ const p = POS[s.id]; if (Array.isArray(p) && isFinite(p[0]) && isFinite(p[1])){ s.x = +p[0]; s.y = +p[1]; s.moved = true; fixed.push(s); } }
+  if (!fixed.length) return;
+  const hit = (a, b) => a.x < b.x+b.w+400 && a.x+a.w+400 > b.x && a.y < b.y+b.h+300 && a.y+a.h+300 > b.y;
+  for (const s of SYSL){ if (s.moved) continue; for (let n = 0; n < 60; n++){ const o = fixed.find(t => hit(s, t)); if (!o) break; s.y = o.y + o.h + 800; } fixed.push(s); }
+}
+function placeSys(s){ for (const m of s.mods){ m.x = s.x + m.rx; m.y = s.y + m.ry; for (const u of m.units){ u.x = m.x + u.rx; u.y = m.y + u.ry; } } }
+function placeAbs(){
+  let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+  for (const s of SYSL){ placeSys(s); x0 = Math.min(x0,s.x); y0 = Math.min(y0,s.y); x1 = Math.max(x1,s.x+s.w); y1 = Math.max(y1,s.y+s.h); }
+  if (!SYSL.length){ x0 = 0; y0 = 0; x1 = 4000; y1 = 2600; }      // 아직 분석한 시스템이 없는 빈 작업 공간
+  WORLD = {x0,y0,x1,y1};
+  if (SCALE === 1) CLUSTER = {w:x1-x0, h:y1-y0};
+}
+/* 모듈·시스템 사이 굵은 선의 자리. 시스템을 옮기면 다시 잡는다. */
+function computeGeo(){
+  for (const e of MODE) e.geo = geom(e.a, e.b);
+  const pairs = {}; for (const e of SYSE){ const k = [e.a.id,e.b.id].sort().join('|'); (pairs[k] = pairs[k] || []).push(e); }
+  for (const k in pairs) pairs[k].forEach((e,j,arr) => {
+    const g = geom(e.a, e.b), off = (j - (arr.length-1)/2)*270;
+    if (g[1] === g[3]){ g[1] += off; g[3] += off; g[5] += off; g[7] += off; } else { g[0] += off; g[2] += off; g[4] += off; g[6] += off; }
+    e.geo = g; e.lt = 0.4 + (j%2)*0.2; e.ph = (j*0.37 + k.length*0.11) % 1;
+  });
+}
+function moveSys(s){ placeSys(s); computeGeo(); for (const u of s.units){ for (const e of u.out) e.geo = null; for (const e of u.in) e.geo = null; } invalidate(); }
+function relayout(){ applyPositions(); placeAbs(); computeGeo(); for (const e of EDGES) e.geo = null; resize(); invalidate(); }
 
 /* ───────────── 카메라 ───────────── */
 function insets(){
@@ -509,8 +567,10 @@ function draw(now){
   for (const s of SYSL){
     if (!inView(s)) continue;
     const x = SX(s.x), y = SY(s.y), w = s.w*z, h = s.h*z;
-    ctx.fillStyle = rgba(s.color, 0.03); ctx.fillRect(x,y,w,h);
-    ctx.strokeStyle = rgba(s.color, 0.32); ctx.lineWidth = 1; ctx.strokeRect(Math.round(x)+.5, Math.round(y)+.5, w, h);
+    ctx.fillStyle = rgba(s.color, state.arrange ? 0.1 : 0.03); ctx.fillRect(x,y,w,h);
+    if (s.ext) ctx.setLineDash([9, 7]);          // 소스 없는 시스템(레거시)
+    ctx.strokeStyle = rgba(s.color, s.ext ? 0.7 : 0.32); ctx.lineWidth = 1; ctx.strokeRect(Math.round(x)+.5, Math.round(y)+.5, w, h);
+    ctx.setLineDash([]);
     const k = clamp(Math.min(w,h)*0.07, 7, 34);
     ctx.beginPath();
     ctx.moveTo(x,y+k); ctx.lineTo(x,y); ctx.lineTo(x+k,y); ctx.moveTo(x+w-k,y); ctx.lineTo(x+w,y); ctx.lineTo(x+w,y+k);
@@ -609,6 +669,11 @@ function draw(now){
     const e = state.walk.cands[state.walk.i], g = e.geo || (e.geo = geom(UNITS[e.s], UNITS[e.t]));
     ctx.beginPath(); pathCurve(g); ctx.strokeStyle = rgba('#FFFFFF', 0.25); ctx.lineWidth = 9*px1; ctx.stroke(); ctx.strokeStyle = '#FFFFFF'; ctx.lineWidth = 2.4*px1; ctx.stroke();
     walkTarget = UNITS[e.t]; ctx.beginPath(); chamfer(walkTarget.x, walkTarget.y, walkTarget.w, walkTarget.h, 10); ctx.strokeStyle = '#FFFFFF'; ctx.lineWidth = 2*px1; ctx.stroke();
+  }
+  if (state.sel && UNITS[state.sel.u].pend){      // 대상을 정하지 못한 호출: 후보마다 주황 점선
+    const u = UNITS[state.sel.u], seen = new Set(); ctx.save(); ctx.setLineDash([9*px1, 7*px1]); ctx.strokeStyle = rgba('#FFB454', 0.95); ctx.lineWidth = 1.8*px1; ctx.beginPath();
+    for (const p of u.pend) for (const c of p.cands) if (!seen.has(c[1])){ seen.add(c[1]); pathCurve(geom(u, UNITS[c[1]])); }
+    ctx.stroke(); ctx.restore();
   }
   if (state.hoverEdge && state.hoverEdge.e.geo){ ctx.beginPath(); pathCurve(state.hoverEdge.e.geo); ctx.strokeStyle = rgba('#FFFFFF', 0.25); ctx.lineWidth = 11*px1; ctx.stroke(); ctx.strokeStyle = '#FFFFFF'; ctx.lineWidth = 2.2*px1; ctx.stroke(); }
   if (!reduceMotion && bright.length && bright.length < 140){
@@ -1282,7 +1347,58 @@ function renderTrace(){
     ${Object.keys(bySys).map(sid => `<section><h3 style="color:${SYS[sid].color}">${esc(SYS[sid].name)} <em>${bySys[sid].length}</em></h3><div class="chips">${bySys[sid].sort((a,b) => b.deg-a.deg).slice(0,24).map(u => chip(u)).join('')}${bySys[sid].length > 24 ? `<span class="more">+${bySys[sid].length-24}</span>` : ''}</div></section>`).join('')}
     ${root.tests && root.tests.length ? `<section><h3>돌려 볼 테스트</h3><p class="path">${root.tests.map(esc).join('<br>')}</p></section>` : ''}</div>`;
     el.hidden = false;
-  } else { el.hidden = true; el.innerHTML = ''; }
+  } else if (state.nav){ renderNav(el); el.hidden = false; }
+  else { el.hidden = true; el.innerHTML = ''; }
+}
+/* 시스템 목록: 눌러서 그 시스템으로 이동한다. 시스템이 많을 때 지도를 헤매지 않게 하는 입구이고, 배치 편집과 설정도 여기서 연다. */
+function renderNav(el){
+  const list = SYSL.filter(s => !s.base).slice().sort((a,b) => a.x - b.x || a.y - b.y), pend = pendingCount();
+  const kind = s => s.ext ? '레거시' : s.id === 'device' || s.id === 'cloud' ? '외부' : '시스템';
+  el.innerHTML = `<div class="side-head"><div><span class="eyebrow">바로 가기</span><h2>시스템 ${list.length}개</h2></div><button class="x" data-act="nav" aria-label="시스템 목록 닫기">닫기</button></div>
+  <div class="side-body">
+    ${list.length > 8 ? `<input class="navq" id="navq" type="text" autocomplete="off" spellcheck="false" placeholder="이름으로 거르기" aria-label="시스템 이름으로 거르기">` : ''}
+    <section><div class="xlink" id="navlist">${list.map(s => `<button class="xrow srow" data-sys="${esc(s.id)}" data-name="${esc((s.name + ' ' + s.id).toLowerCase())}" style="--c:${s.color}"><span class="k">${kind(s)}</span><span class="n">${esc(s.name)}<span class="r">${esc(s.sub || '')}${s.sub ? ' · ' : ''}유닛 ${s.units.length}</span></span></button>`).join('')}</div></section>
+    ${pend ? `<section><h3>확인이 필요한 호출 <em>${pend}</em></h3><p class="note">경로가 여러 서버에 맞아 선을 긋지 않은 호출입니다.</p><div class="acts"><button class="act" data-act="pending">목록 보기</button></div></section>` : ''}
+    <section><h3>배치</h3><p class="note">시스템 상자를 끌어 자리를 옮길 수 있습니다. 옮긴 자리는 저장되고, 새로 추가된 시스템은 빈자리에 놓입니다.</p>
+      <div class="acts"><button class="act${state.arrange ? ' on' : ''}" data-act="arrange">${state.arrange ? '배치 편집 끝내기' : '시스템 자리 옮기기'}</button>${SYSL.some(s => s.moved) ? `<button class="act" data-act="arrange-reset">자동 정렬로 되돌리기</button>` : ''}</div></section>
+    ${API.ok ? `<section><h3>설정</h3><div class="acts"><button class="act" data-act="cfg">폴더·레거시·다시 분석</button></div></section>` : ''}
+  </div>`;
+}
+const pendingCount = () => SCALE === 1 ? UNITS.reduce((a,u) => a + (u.pend ? u.pend.length : 0), 0) : 0;
+function renderPending(){
+  const el = $('#pendbox'); if (!el) return;
+  const n = pendingCount(), off = SCALE === 1 && META.offmap ? META.offmap.length : 0;
+  if (!n && !off){ el.hidden = true; el.innerHTML = ''; return; }
+  el.innerHTML = (n ? `<b>확인이 필요한 호출 ${n}</b><br>` : '') + (off ? `지도에 없는 주소로 가는 호출 ${off}곳<br>` : '')
+    + (n ? `<button class="mini-act" data-act="pending" style="color:#FFB454;border-color:#FFB454">목록 보기</button>` : '') + (API.ok ? `<button class="mini-act" data-act="cfg">설정</button>` : '');
+  el.hidden = false;
+}
+function showPending(){
+  const by = new Map();
+  for (const u of UNITS) for (const p of u.pend || []){ let x = by.get(u.i); if (!x){ x = {u:u.i, s:0, why:[], m:p.m}; by.set(u.i, x); } x.s++; x.why.push(`${p.call} → 후보: ${p.cands.map(c => SYS[c[0]] ? SYS[c[0]].name : c[0]).join(' · ')}`); }
+  const list = [...by.values()]; if (!list.length) return;
+  cancelAI(); state.trace = null; state.impact = null; state.sel = null; state.edge = null;
+  state.hits = {q:'확인이 필요한 호출', kind:'연결 판단', note:'같은 경로가 여러 서버에 있어 어느 서버로 가는 호출인지 정하지 못했습니다. 틀린 선을 긋지 않고 남겨 둔 것이니, 유닛을 고르면 후보가 주황 점선으로 보입니다. 설정에서 부르는 서버를 정하면 다음 분석부터 이어집니다.', list:list.slice(0,80), units:new Set(list.map(x => x.u)), edges:new Set()};
+  computeFocus(); renderTrace(); renderInspector(); $('#qclear').hidden = false; fitUnits(list.map(x => x.u), 0.5);
+}
+/* 배치 편집: 켜 두는 동안에만 시스템 상자가 끌린다. 평소에는 끌어도 지도가 움직일 뿐이라 실수로 배치를 바꾸지 않는다. */
+const posKey = 'atlas-pos-v1:' + location.pathname;
+function flash(msg){ const el = $('#walk'); el.innerHTML = `<span class="wk">${esc(msg)}</span>`; el.hidden = false; clearTimeout(flash.t); flash.t = setTimeout(renderWalk, 4200); }
+async function savePositions(){
+  const p = {}; for (const s of SYSL) if (!s.base && s.moved) p[s.id] = [Math.round(s.x), Math.round(s.y)];
+  POS = Object.keys(p).length ? p : null;
+  const shared = API.ok && await apiPost('layout', {positions:p});
+  if (!shared) saveLocal(posKey, POS);
+  flash(shared ? '배치를 작업 공간에 저장했습니다. 같이 쓰는 사람에게도 같은 배치로 보입니다.' : '배치를 이 브라우저에 저장했습니다.');
+}
+function setArrange(on){
+  if (on === state.arrange) return;
+  if (on){ clearAll(); state.arrange = true; } else { state.arrange = false; placeAbs(); resize(); savePositions(); }
+  cv.classList.toggle('arr', state.arrange); renderTrace(); renderWalk(); invalidate();
+}
+function resetArrange(){ for (const s of SYSL) s.moved = false; POS = null; relayout(); savePositions(); renderTrace(); fitAll(); }
+async function apiPost(name, body){
+  try { const r = await fetch('api/' + name, {method:'POST', headers:{'Content-Type':'application/json', 'X-Atlas-Token':API.token}, body:JSON.stringify(body || {})}); return r.ok ? await r.json() : null; } catch (e){ return null; }
 }
 const minBtn = () => `<button class="x" data-act="min-insp" aria-expanded="${!state.min}" aria-label="${state.min ? '설명 펼치기' : '설명 접기'}">${state.min ? '펼치기' : '접기'}</button>`;
 function renderInspector(){
@@ -1312,6 +1428,8 @@ function renderInspector(){
     ${u.rt && RT ? `<section><h3>실측 응답 <em>${esc(RT.source)} · ${esc(RT.window)}</em></h3><div class="xlink">${u.rt.routes.map(x => `<button class="xrow" data-u="${u.i}" data-um="${x.mi}" style="--c:${x.bad ? RED : OKC}"><span class="k">${x.bad ? '비정상' : '정상'}</span><span class="n">${esc(x.route)}<span class="r codes">${codeChips(x.codes, RT.from)}${x.p95 ? `<span class="code">p95 ${x.p95}ms</span>` : ''}</span></span></button>`).join('')}</div></section>` : ''}
     ${lits.length ? `<section><h3>화면 문구·오류 코드 <em>코드 속 문자열</em></h3><div class="lits">${lits.map(t => `<span class="lit">${esc(t)}</span>`).join('')}</div></section>` : ''}
     ${xr ? `<section><h3>시스템을 넘는 연결</h3><div class="xlink">${xr}</div></section>` : ''}
+    ${u.pend ? `<section><h3 style="color:#FFB454">확인이 필요한 호출 <em>어느 서버인지 정하지 못함</em></h3><div class="xlink">${u.pend.slice(0,8).map(p => `<div class="path">${p.m != null && u.m[p.m] ? esc(u.m[p.m].n) + ' · ' : ''}${esc(p.call)}</div>` + p.cands.map(c => `<button class="xrow" data-u="${c[1]}"${c[2] != null ? ` data-um="${c[2]}"` : ''} style="--c:#FFB454"><span class="k">후보</span><span class="n">${esc(SYS[c[0]] ? SYS[c[0]].name : c[0])} · ${esc(UNITS[c[1]].name)}<span class="r">${esc(c[3])}</span></span></button>`).join('')).join('')}</div>
+      <p class="note" style="margin-top:6px">같은 경로가 여러 서버에 있습니다. ${API.ok ? '설정에서 이 시스템이 부르는 서버를 정하면 다음 분석부터 이어집니다.' : '작업 공간 설정의 link.calls 에 이 시스템이 부르는 서버를 적으면 이어집니다.'}</p>${API.ok ? `<div class="acts" style="margin-top:8px"><button class="act" data-act="cfg">설정 열기</button></div>` : ''}</section>` : ''}
     ${inUse.length ? `<section><h3>여기로 들어오는 곳 <em>${inUse.length}</em></h3>${chipList(inUse, e => e.s, u)}</section>` : ''}
     ${outUse.length ? `<section><h3>여기서 나가는 곳 <em>${outUse.length}</em></h3>${chipList(outUse, e => e.t, u)}</section>` : ''}
     ${u.m.length ? `<section><h3>${u.kind === 'table' || u.kind === 'enum' ? '필드' : '메서드'} <em>${u.m.length}</em></h3><div class="mlist">${u.m.map((m,i) => `<button class="mrow${sm === i ? ' on' : ''}" data-m="${i}"><span class="dot" style="background:${m.rt && m.rt.bad || (m.st && m.st.some(c => c[0] >= 400)) ? RED : m.route || m.h ? EK.http.c : m.db ? EK.db.c : 'transparent'}"></span><span class="n">${esc(m.k === 'field' ? m.s : m.n)}</span><span class="l">${m.rt && m.rt.bad && RT ? `<b>${esc(badText(m.rt, RT.from))}</b> ` : ''}${m.route ? esc(m.route) : m.k === 'field' ? '' : 'L' + m.l + (m.e > m.l ? '–' + m.e : '')}</span></button>${sm === i ? memberDetail(u, m) : ''}`).join('')}</div></section>` : ''}
@@ -1375,6 +1493,8 @@ function walkCands(u){
 }
 function renderWalk(){
   const el = $('#walk');
+  if (!UNITS.length){ el.innerHTML = `<span class="wk">아직 분석한 시스템이 없습니다.${API.ok ? '' : ' atlas.py add 로 폴더를 추가한 뒤 sync 하세요.'}</span>` + (API.ok ? `<button class="mini-act go" data-act="cfg">폴더 추가</button>` : ''); el.hidden = false; return; }
+  if (state.arrange){ el.innerHTML = `<span class="wk"><b>배치 편집</b> · 시스템 상자를 끌어 옮기세요</span><button class="mini-act go" data-act="arrange">완료</button><button class="mini-act" data-act="arrange-reset">자동 정렬</button>`; el.hidden = false; return; }
   if (!walkActive() || !state.walk){ el.hidden = true; return; }
   const w = state.walk, u = UNITS[state.sel.u], e = w.cands[w.i];
   el.innerHTML = `<button class="mini-act" data-act="walk-back"${NAV.hist.length ? '' : ' disabled'}>← 되돌아가기</button>`
@@ -1420,12 +1540,115 @@ function edgePanel(e){
   <div class="side-body">
     <section><h3>양쪽 끝 <em>누르면 그쪽으로 이동</em></h3><div class="xlink">${end(a, '출발')}${end(b, '도착')}</div></section>
     ${e.routes ? `<section><h3>API</h3><p class="path">${e.routes.map(esc).join('<br>')}</p></section>` : ''}
+    ${e.guess ? `<section><p class="note">추정한 연결입니다. 같은 경로가 다른 서버에도 있어, 이 시스템의 다른 호출이 몰리는 서버로 골랐습니다.</p></section>` : ''}
     ${e.keys ? `<section><h3>토픽·이벤트 이름</h3><p class="path">${e.keys.map(esc).join('<br>')}</p></section>` : ''}
     ${e.ops ? `<section><h3>DB 접근</h3><p>${{r:'읽기', w:'쓰기', rw:'읽기와 쓰기'}[e.ops] || ''}</p></section>` : ''}
     <section><h3>메서드 단위 연결 <em>${rows.length}</em></h3>${rows.length ? `<div class="mlist">${rows.slice(0,40).map(([mi,tm,lab]) => `<button class="mrow" data-u="${a.i}" data-um="${mi}"><span class="dot" style="background:${EK[e.g].c}"></span><span class="n">${esc(a.m[mi].n)} → ${tm != null && b.m[tm] ? esc(b.m[tm].n) : esc(b.name)}</span><span class="l">${esc(lab)}</span></button>`).join('')}</div>` : `<p class="note">${none}</p>`}</section>
     ${e.by && e.by.length ? `<section><h3>근거 <em>이 연결을 만든 규칙</em></h3><p class="path">${e.by.map(esc).join('<br>')}</p></section>` : ''}
     <section class="acts"><button class="act" data-act="edge-fit">양쪽을 한 화면에 보기</button></section>
   </div>`;
+}
+
+/* ───────────── 설정 패널 ─────────────
+   atlas.py open 으로 띄운 로컬 서버에서만 켜진다(정적 파일로 올린 화면이나 아티팩트에서는 단추가 보이지 않는다).
+   터미널 명령으로 하던 일(폴더 추가, 다시 분석, 로그 넣기)과 한 지도에 여러 제품을 둘 때 필요한 설정(서버 주소, 레거시, 부르는 서버)을 여기서 한다. */
+const CFG = {view:'main', ls:null, pre:null, err:'', msg:'', dirty:false, ext:null, timer:null};
+async function initApi(){
+  try { const r = await fetch('api/state', {cache:'no-store'}); if (!r || !r.ok) return; const d = await r.json(); if (d && d.token){ API.ok = true; API.token = d.token; API.st = d; } } catch (e){}
+}
+async function call(name, body){          // 실패하면 서버가 알려 준 이유를 CFG.err 에 담는다
+  CFG.err = '';
+  try {
+    const r = await fetch('api/' + name, {method:'POST', headers:{'Content-Type':'application/json', 'X-Atlas-Token':API.token}, body:JSON.stringify(body || {})}), d = await r.json();
+    if (!r.ok){ CFG.err = d.error || '요청이 실패했습니다.'; return null; }
+    return d;
+  } catch (e){ CFG.err = '로컬 서버에 닿지 않습니다. atlas.py open 이 실행 중인지 확인하세요.'; return null; }
+}
+async function refreshState(){ try { const r = await fetch('api/state', {cache:'no-store'}); if (r.ok) API.st = await r.json(); } catch (e){} }
+async function openConfig(){ if (!API.ok) return; await refreshState(); CFG.view = 'main'; CFG.err = CFG.msg = ''; $('#cfg').hidden = false; renderConfig(); if (API.st.job.running) pollJob(); }
+function closeConfig(){ $('#cfg').hidden = true; clearTimeout(CFG.timer); }
+function jobStatus(){
+  const j = API.st.job, what = j.kind === 'ingest' ? '접속 로그 읽기' : '분석';
+  if (j.running) return `<div class="aibar"><span class="pulse"></span><span>${what} 중입니다</span></div><pre class="log">${esc(j.log.slice(-8).join('\n'))}</pre>`;
+  if (j.rc) return `<div class="aibar err"><span>${what}에 실패했습니다.</span></div><pre class="log">${esc(j.log.slice(-14).join('\n'))}</pre>`;
+  if (CFG.msg) return `<div class="aibar"><span>${esc(CFG.msg)}</span></div>`;
+  return CFG.dirty ? `<div class="aibar"><span>설정이 바뀌었습니다. 다시 분석해야 지도에 반영됩니다.</span><button class="mini-act" data-c="sync">다시 분석</button></div>` : '';
+}
+function renderConfig(){
+  const st = API.st, el = $('#cfgbox'), M = META || {};
+  const sysName = id => { const y = st.systems.find(y => y.id === id) || (st.external || []).find(x => x.id === id); return y ? y.name : id; };
+  const head = `<div class="side-head"><div><span class="eyebrow">설정</span><h2>${esc(st.name || '작업 공간')}</h2></div><button class="x" data-c="close" aria-label="설정 닫기">닫기</button></div>`;
+  const twins = (st.summary.twins || []).map(([a, b]) => `<div class="aibar err"><span>${esc(sysName(a))} 와 ${esc(sysName(b))} 의 API 목록이 똑같습니다. 같은 서버를 두 번 넣었다면 하나를 빼야 지도에 하나로 나옵니다.</span></div>`).join('');
+  const top = `<div id="cfg-status">${jobStatus()}</div>${CFG.err ? `<div class="aibar err"><span>${esc(CFG.err)}</span></div>` : ''}${twins}`;
+  if (CFG.view === 'add'){
+    const ls = CFG.ls, pre = CFG.pre;
+    el.innerHTML = head + `<div class="side-body">${top}
+      <section><h3>폴더 추가 <em>폴더는 읽기만 합니다</em></h3>
+        <div class="cform"><input type="text" id="add-path" value="${esc(ls ? ls.path : st.home)}" spellcheck="false" aria-label="폴더 경로"><button class="mini-act" data-c="ls-go">이동</button></div>
+        <div class="dirs">${ls && ls.parent ? `<button data-c="ls" data-v="..">← 상위 폴더</button>` : ''}${ls ? ls.dirs.map(d => `<button data-c="ls" data-v="${esc(d)}">${esc(d)}</button>`).join('') || '<p class="note" style="padding:8px">하위 폴더가 없습니다.</p>' : ''}</div>
+        <div class="acts"><button class="act" data-c="preview">이 폴더 미리보기</button><button class="act" data-c="back">취소</button></div></section>
+      ${pre ? `<section><h3>미리보기 <em>${esc(pre.path)}</em></h3>${pre.systems.length ? pre.systems.map(y => `<div class="crow"><span class="nm">${esc(y.name)}<small>${esc(y.sub)} · 루트 ${y.roots.map(esc).join(', ')}${y.note ? ' · ' + esc(y.note) : ''}</small></span></div>`).join('') + `<div class="acts" style="margin-top:10px"><button class="act on" data-c="add">추가하고 분석</button></div>`
+        : '<p class="note">이 폴더에서 알아볼 수 있는 시스템이 없습니다. 저장소의 맨 위 폴더를 골라 보세요.</p>'}</section>` : ''}</div>`;
+    return;
+  }
+  const src = st.sources.map(x => `<div class="crow"><span class="nm">${esc(x.path || x.git)}<small>${esc(x.name)} · 시스템 ${x.systems.length}${x.systems.length ? ' (' + x.systems.map(sysName).map(esc).join(', ') + ')' : ''}</small></span><button class="mini-act" data-c="remove" data-v="${esc(x.name)}">빼기</button></div>`).join('') || `<p class="note">아직 추가한 폴더가 없습니다.</p>`;
+  const sys = st.systems.map(y => `<div class="crow"><span class="nm">${esc(y.name)}<small>${esc(y.sub)} · ${esc(y.id)}${y.skipped ? ' · 문법 패키지가 없어 건너뜀' : ''}</small></span><input type="text" data-host="${esc(y.id)}" value="${esc(y.hosts.join(', '))}" placeholder="서버 주소 (예: api.example.com)" spellcheck="false" aria-label="${esc(y.name)} 서버 주소"><button class="mini-act" data-c="hosts" data-v="${esc(y.id)}">저장</button></div>`).join('');
+  const seen = (M.hosts_seen || []).filter(h => !h.owner).map(h => h.host).slice(0, 14);
+  const xs = (st.external || []).map(x => `<div class="crow"><span class="nm">${esc(x.name)}<small>${[x.hosts && '주소 ' + x.hosts.join(', '), x.paths && '경로 ' + x.paths.join(', '), x.clients && '클라이언트 ' + x.clients].filter(Boolean).map(esc).join(' · ')}${st.summary.external && st.summary.external[x.id] ? ' · 보내는 호출 ' + st.summary.external[x.id].calls : ''}</small></span><button class="mini-act" data-c="ext-remove" data-v="${esc(x.id)}">빼기</button></div>`).join('');
+  const off = (M.offmap || []).map(o => `<div class="crow"><span class="nm">${esc(o.host)}<small>호출 ${o.n} · ${o.systems.map(sysName).map(esc).join(', ')} · ${o.paths.map(esc).join(' ')}</small></span><button class="mini-act" data-c="ext-from" data-v="${esc(o.host)}">레거시로 등록</button></div>`).join('');
+  const groups = new Map();
+  for (const u of UNITS) for (const p of u.pend || []){ const ids = [...new Set(p.cands.map(c => c[0]))].sort(), k = u.sys + '|' + ids.join(','); let g = groups.get(k); if (!g){ g = {from:u.sys, cands:ids, n:0, ex:p.call}; groups.set(k, g); } g.n++; }
+  const pend = [...groups.values()].map(g => `<div class="crow"><span class="nm">${esc(sysName(g.from))}<small>${g.n}건 · 예: ${esc(g.ex)}</small></span>${g.cands.map(c => `<button class="mini-act" data-c="link" data-from="${esc(g.from)}" data-to="${esc(c)}">${esc(sysName(c))} 로</button>`).join('')}</div>`).join('');
+  const rules = [...Object.entries(st.link.calls).flatMap(([a,ts]) => ts.map(t => [a, t, '애매하면 이 서버로 본다'])), ...Object.entries(st.link.never).flatMap(([a,ts]) => ts.map(t => [a, t, '잇지 않는다']))]
+    .map(([a,t,w]) => `<div class="crow"><span class="nm">${esc(sysName(a))} → ${esc(sysName(t))}<small>${w}</small></span><button class="mini-act" data-c="link-clear" data-from="${esc(a)}" data-to="${esc(t)}">지우기</button></div>`).join('');
+  const X = CFG.ext || {};
+  el.innerHTML = head + `<div class="side-body">${top}
+    <section><h3>소스 폴더 <em>${st.sources.length}</em></h3>${src}<div class="acts" style="margin-top:10px"><button class="act" data-c="open-add">폴더 추가</button><button class="act" data-c="sync">다시 분석</button></div>
+      <p class="note" style="margin-top:6px">마지막 분석 ${esc((st.built_at || '없음').replace('T', ' '))} · 유닛 ${(st.summary.units || 0).toLocaleString()} · 연결 ${(st.summary.edges || 0).toLocaleString()}. 같은 서버는 한 번만 넣어야 지도에 하나로 나옵니다.</p></section>
+    ${pend || rules ? `<section>${pend ? `<h3 style="color:#FFB454">확인이 필요한 호출 <em>어느 서버를 부르는지 정해 주세요</em></h3>` : `<h3>부르는 서버 지정 <em>${rules ? '정해 둔 것' : ''}</em></h3>`}${pend}${rules}</section>` : ''}
+    ${st.systems.length ? `<section><h3>시스템과 서버 주소 <em>${st.systems.length}</em></h3>${sys}<p class="note" style="margin-top:6px">서버 주소를 적어 두면, 그 주소로 가는 호출은 경로가 다른 서버와 겹쳐도 이 서버에 붙습니다. 쉼표로 여러 개를 적을 수 있습니다.${seen.length ? ' 코드에서 본 주소: ' + seen.map(esc).join(', ') : ''}</p></section>` : ''}
+    <section><h3>레거시 <em>소스 없이 지도에 올리는 시스템</em></h3>${xs}${off ? `<p class="note" style="margin:8px 0 4px">지도에 없는 주소로 가는 호출</p>${off}` : ''}
+      <div class="cform" style="margin-top:10px"><input type="text" id="x-name" value="${esc(X.name || '')}" placeholder="이름 (예: 레거시 ERP)"><input type="text" id="x-hosts" value="${esc(X.hosts || '')}" placeholder="주소 (예: erp.example.com)" spellcheck="false">
+        <input type="text" id="x-paths" value="${esc(X.paths || '')}" placeholder="경로 꼴 (예: /erp/**)" spellcheck="false"><input type="text" id="x-clients" value="${esc(X.clients || '')}" placeholder="클라이언트 이름 꼴 (예: Erp.*Client)" spellcheck="false"><button class="act" data-c="ext-add">레거시 등록</button></div>
+      <p class="note" style="margin-top:6px">주소, 경로 꼴, 클라이언트 이름 가운데 하나만 적어도 됩니다. 우리 코드가 그쪽으로 보내는 요청이 지도에 선으로 나옵니다.</p></section>
+    <section><h3>접속 로그 <em>실측 응답</em></h3><div class="cform"><input type="text" id="log-path" placeholder="접속 로그 파일 경로 (예: /var/log/nginx/access.log)" spellcheck="false"><button class="act" data-c="ingest">로그 넣기</button></div></section>
+  </div>`;
+}
+async function startJob(kind, body){ CFG.msg = ''; if (await call(kind, body)){ await refreshState(); pollJob(); } }
+function pollJob(){
+  clearTimeout(CFG.timer);
+  CFG.timer = setTimeout(async () => {
+    const j = await call('job'); if (!j) return; API.st.job = j;
+    if (!j.running && j.kind === 'sync' && j.rc === 0){ location.reload(); return; }      // 새 분석 결과로 지도를 다시 그린다
+    if (!j.running && j.kind === 'ingest' && j.rc === 0){ CFG.msg = '접속 로그를 읽었습니다. 지도에 곧 반영됩니다.'; checkRuntime(); }
+    const box = $('#cfg-status'); if (box) box.innerHTML = jobStatus(); else renderConfig();
+    if (j.running) pollJob();
+  }, 600);
+}
+function bindConfig(){
+  $('#cfg').addEventListener('click', async e => {
+    if (e.target.id === 'cfg'){ closeConfig(); return; }        // 바깥을 누르면 닫는다
+    const t = e.target.closest('[data-c]'); if (!t) return;
+    const c = t.dataset.c, v = t.dataset.v, val = id => { const x = $('#' + id); return x ? x.value.trim() : ''; };
+    if (c === 'close'){ closeConfig(); return; }
+    if (c === 'open-add'){ CFG.view = 'add'; CFG.pre = null; CFG.ls = await call('ls', {path:CFG.ls ? CFG.ls.path : ''}); }
+    else if (c === 'back'){ CFG.view = 'main'; CFG.err = ''; }
+    else if (c === 'ls'){ const r = await call('ls', v === '..' ? {path:CFG.ls.parent} : {path:CFG.ls.path, child:v}); if (r){ CFG.ls = r; CFG.pre = null; } }
+    else if (c === 'ls-go'){ const r = await call('ls', {path:val('add-path')}); if (r){ CFG.ls = r; CFG.pre = null; } }
+    else if (c === 'preview'){ CFG.pre = await call('add', {path:val('add-path'), dry_run:true}); }
+    else if (c === 'add'){ if (CFG.pre && await call('add', {path:CFG.pre.path})){ CFG.view = 'main'; CFG.pre = null; await startJob('sync'); } }
+    else if (c === 'remove'){ if (await call('remove', {source:v})) CFG.dirty = true; }
+    else if (c === 'hosts'){ const inp = [...document.querySelectorAll('#cfg input[data-host]')].find(x => x.dataset.host === v); if (await call('system', {id:v, hosts:inp ? inp.value : ''})) CFG.dirty = true; }
+    else if (c === 'ext-from'){ CFG.ext = {hosts:v}; }
+    else if (c === 'ext-add'){ const x = {name:val('x-name'), hosts:val('x-hosts'), paths:val('x-paths'), clients:val('x-clients')}; if (await call('external', x)){ CFG.ext = null; CFG.dirty = true; } else CFG.ext = x; }
+    else if (c === 'ext-remove'){ if (await call('external', {remove:v})) CFG.dirty = true; }
+    else if (c === 'link'){ if (await call('link', {from:t.dataset.from, to:t.dataset.to, mode:'calls'})) CFG.dirty = true; }
+    else if (c === 'link-clear'){ if (await call('link', {from:t.dataset.from, to:t.dataset.to, mode:'drop'})) CFG.dirty = true; }
+    else if (c === 'sync'){ CFG.dirty = false; await startJob('sync'); }
+    else if (c === 'ingest'){ await startJob('ingest', {path:val('log-path')}); }
+    const keep = CFG.err; await refreshState(); CFG.err = keep; renderConfig();
+    if (c === 'ext-from'){ const n = $('#x-name'); if (n) n.focus(); }
+  });
 }
 
 /* ───────────── 현행화 정보: 최근 변경과 새 버전 알림 ───────────── */
@@ -1543,14 +1766,21 @@ function pick(sx, sy){
   return null;
 }
 function bindInput(){
-  const ptrs = new Map(); let drag = null, pinch = null, moved = 0, pinched = false, wheelAt = 0, wheelMouse = false;
+  const ptrs = new Map(); let drag = null, sdrag = null, pinch = null, moved = 0, pinched = false, wheelAt = 0, wheelMouse = false;
   cv.addEventListener('pointerdown', e => {
     cv.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, {x:e.clientX, y:e.clientY}); anim = null; inertia = null; zoomTarget = null; hideTip();
-    if (ptrs.size === 1){ drag = {x:e.clientX, y:e.clientY, sx:e.clientX, sy:e.clientY, vx:0, vy:0}; moved = 0; pinched = false; cv.classList.add('drag'); }
+    const grab = state.arrange && ptrs.size === 1 ? pick(e.clientX, e.clientY) : null;
+    if (grab && !grab.s.base){ sdrag = {s:grab.s, x:e.clientX, y:e.clientY, ox:grab.s.x, oy:grab.s.y}; drag = null; cv.classList.add('drag'); }
+    else if (ptrs.size === 1){ drag = {x:e.clientX, y:e.clientY, sx:e.clientX, sy:e.clientY, vx:0, vy:0}; moved = 0; pinched = false; cv.classList.add('drag'); }
     else if (ptrs.size === 2){ const [a,b] = [...ptrs.values()]; pinch = {d:Math.hypot(a.x-b.x, a.y-b.y), cx:(a.x+b.x)/2, cy:(a.y+b.y)/2}; drag = null; pinched = true; }
   });
   cv.addEventListener('pointermove', e => {
     if (ptrs.has(e.pointerId)) ptrs.set(e.pointerId, {x:e.clientX, y:e.clientY});
+    if (sdrag && ptrs.size === 1){        // 배치 편집: 시스템 상자를 100 단위 눈금에 맞춰 옮긴다
+      const nx = Math.round((sdrag.ox + (e.clientX-sdrag.x)/cam.z)/100)*100, ny = Math.round((sdrag.oy + (e.clientY-sdrag.y)/cam.z)/100)*100;
+      if (nx !== sdrag.s.x || ny !== sdrag.s.y){ sdrag.s.x = nx; sdrag.s.y = ny; sdrag.s.moved = true; moveSys(sdrag.s); }
+      return;
+    }
     if (pinch && ptrs.size === 2){
       const [a,b] = [...ptrs.values()], d = Math.hypot(a.x-b.x, a.y-b.y), cx = (a.x+b.x)/2, cy = (a.y+b.y)/2;
       cam.x -= (cx-pinch.cx)/cam.z; cam.y -= (cy-pinch.cy)/cam.z; zoomAt(cx, cy, d/Math.max(1,pinch.d)); pinch = {d, cx, cy};
@@ -1561,6 +1791,7 @@ function bindInput(){
   });
   const up = e => {
     ptrs.delete(e.pointerId); if (ptrs.size < 2) pinch = null;
+    if (sdrag){ sdrag = null; cv.classList.remove('drag'); placeAbs(); invalidate(); return; }
     if (drag && ptrs.size === 0){
       cv.classList.remove('drag');
       if (!pinched && Math.hypot(e.clientX-drag.sx, e.clientY-drag.sy) < 7) click(e); else if (!reduceMotion && Math.abs(drag.vx)+Math.abs(drag.vy) > 3) inertia = {vx:drag.vx, vy:drag.vy};
@@ -1585,6 +1816,7 @@ function bindInput(){
   cv.addEventListener('dblclick', e => { const z = clamp(cam.z*2.2, zMin, zMax), wx = cam.x + (e.clientX-W/2)/cam.z, wy = cam.y + (e.clientY-H/2)/cam.z; flyTo(wx - (e.clientX-W/2)/z, wy - (e.clientY-H/2)/z, z, 420); });
 
   function click(e){
+    if (state.arrange) return;
     const p = pick(e.clientX, e.clientY);
     if (!(p && p.u && cam.z >= 0.14)){
       const pe = pickEdge(e.clientX, e.clientY);
@@ -1623,12 +1855,12 @@ function bindInput(){
 
   // 단계 버튼
   $('#level').addEventListener('click', e => {
-    const b = e.target.closest('button'); if (!b) return; const lv = +b.dataset.lv;
+    const b = e.target.closest('button'); if (!b || b.dataset.lv == null) return; const lv = +b.dataset.lv;
     if (lv === 0){ fitAll(); return; }
     const z = [0, 0.19, 0.6, 1.3][lv];
     let cx = cam.x, cy = cam.y;
     if (state.sel){ const u = UNITS[state.sel.u]; cx = u.x+u.w/2; cy = u.y+u.h/2; }
-    else if (!pick(W/2, H/2)){ const s = SYS.ios || SYSL[0]; cx = s.x + s.w*0.3; cy = s.y + s.h*0.4; }
+    else if (!pick(W/2, H/2) && SYSL.length){ const s = SYSL[0]; cx = s.x + s.w*0.3; cy = s.y + s.h*0.4; }
     flyTo(cx, cy, z);
   });
   $('#scale').addEventListener('click', e => { const b = e.target.closest('button'); if (b && +b.dataset.scale !== SCALE){ load(+b.dataset.scale); setHash('x' + SCALE); } });
@@ -1636,9 +1868,14 @@ function bindInput(){
   $('#legend').innerHTML = Object.keys(EK).map(k => `<button class="lg" data-k="${k}" aria-pressed="true" style="--c:${EK[k].c}"><i></i>${EK[k].ko}</button>`).join('');
   $('#legend').addEventListener('click', e => { const b = e.target.closest('.lg'); if (!b) return; const k = b.dataset.k; show[k] = !show[k]; b.setAttribute('aria-pressed', show[k]); computeFocus(); });
 
+  document.addEventListener('input', e => {       // 시스템 목록 거르기
+    if (e.target.id !== 'navq') return; const k = e.target.value.trim().toLowerCase();
+    document.querySelectorAll('#navlist .srow').forEach(b => { b.hidden = !!k && !b.dataset.name.includes(k); });
+  });
+  bindConfig();
   // 패널 클릭
   document.addEventListener('click', e => {
-    const t = e.target.closest('[data-act],[data-step],[data-ref],[data-m],[data-u]'); if (!t || t.closest('#drop')) return;
+    const t = e.target.closest('[data-act],[data-step],[data-ref],[data-m],[data-u],[data-sys]'); if (!t || t.closest('#drop') || t.closest('#cfg')) return;
     if (t.dataset.act === 'clear') clearAll();
     else if (t.dataset.act === 'ai-stop') cancelAI(true);
     else if (t.dataset.act === 'changes') showChanges();
@@ -1648,6 +1885,15 @@ function bindInput(){
     else if (t.dataset.act === 'ai-retry'){ const qq = state.hits ? state.hits.q : state.trace ? state.trace.sc.q : ''; if (qq) runAITrace(qq, !!state.trace); }
     else if (t.dataset.act === 'ai-explain'){ if (state.sel) explainUnit(UNITS[state.sel.u], !!t.dataset.refresh); }
     else if (t.dataset.act === 'min-insp'){ state.min = !state.min; renderInspector(); }
+    else if (t.dataset.act === 'nav'){
+      state.nav = !state.nav || !!(state.trace || state.hits || state.impact);
+      if (state.nav && (state.trace || state.hits || state.impact || (innerWidth <= 860 && (state.sel || state.edge != null)))) clearAll(); else renderTrace();    // 좁은 화면에서는 설명 패널과 자리가 겹치므로 선택을 푼다
+    }
+    else if (t.dataset.act === 'pending') showPending();
+    else if (t.dataset.act === 'arrange') setArrange(!state.arrange);
+    else if (t.dataset.act === 'arrange-reset') resetArrange();
+    else if (t.dataset.act === 'cfg') openConfig();
+    else if (t.dataset.sys != null){ const sy = SYS[t.dataset.sys]; if (sy){ fitRect(sy, {pad:1.08, maxZ:0.5}); if (innerWidth <= 860){ state.nav = false; renderTrace(); } } }
     else if (t.dataset.act === 'close-insp'){ state.sel = null; state.edge = null; computeFocus(); renderInspector(); }
     else if (t.dataset.act === 'step-prev' || t.dataset.act === 'step-next'){ const tr = state.trace, f = t.dataset.act === 'step-next'; if (tr) gotoStep(tr.cur == null ? (f ? 0 : tr.steps.length-1) : tr.cur + (f ? 1 : -1)); }
     else if (t.dataset.act === 'walk-back') walkBack();
@@ -1692,7 +1938,9 @@ function bindInput(){
   document.addEventListener('pointerdown', e => { if (!e.target.closest('#search')) closeDrop(); });
   $('#qclear').addEventListener('click', () => { clearAll(); q.focus(); });
   addEventListener('keydown', e => {
-    if (e.target === q) return;
+    if (e.key === 'Escape' && !$('#cfg').hidden){ closeConfig(); return; }
+    if (e.target === q || (e.target.closest && e.target.closest('input,textarea,select'))) return;
+    if (e.key === 'Escape' && state.arrange){ setArrange(false); return; }
     if (e.key === '/' || ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k')){ e.preventDefault(); q.focus(); q.select(); }
     else if (e.key === 'Escape'){ if (state.sel || state.edge != null){ state.sel = null; state.edge = null; computeFocus(); renderInspector(); } else clearAll(); }
     else if (e.key === '0') fitAll();
@@ -1764,25 +2012,22 @@ function load(K){
   prepare(buildRecords(K)); layout();
   { const bn = $('#brand-name'); if (bn) bn.textContent = String(META.repo || 'ATLAS').toUpperCase(); try { document.title = (META.repo ? META.repo + ' · ' : '') + '코드 아틀라스'; } catch (e){} }
   for (const s of SYSL){ s.nm = s.units.reduce((a,u) => a+u.m.length, 0); s.open = s.units.reduce((a,u) => a + u.m.filter(m => m.open).length, 0); }
-  for (const e of MODE) e.geo = geom(e.a, e.b);
-  const pairs = {}; for (const e of SYSE){ const k = [e.a.id,e.b.id].sort().join('|'); (pairs[k] = pairs[k] || []).push(e); }
-  for (const k in pairs) pairs[k].forEach((e,j,arr) => {
-    const g = geom(e.a, e.b), off = (j - (arr.length-1)/2)*270;
-    if (g[1] === g[3]){ g[1] += off; g[3] += off; g[5] += off; g[7] += off; } else { g[0] += off; g[2] += off; g[4] += off; g[6] += off; }
-    e.geo = g; e.lt = 0.4 + (j%2)*0.2; e.ph = (j*0.37 + k.length*0.11) % 1;
-  });
-  buildIndex(); renderTrace(); renderInspector(); $('#q').value = ''; $('#qclear').hidden = true;
+  computeGeo();
+  buildIndex(); renderTrace(); renderPending(); renderInspector(); $('#q').value = ''; $('#qclear').hidden = true;
   resize(); fitAll(true);
   const nm = UNITS.reduce((a,u) => a+u.m.length, 0);
   $('#stats').innerHTML = `<b>${SYSL.length}</b> SYSTEMS · <b>${MODS.length.toLocaleString()}</b> MODULES · <b>${UNITS.length.toLocaleString()}</b> UNITS<br><b>${nm.toLocaleString()}</b> METHODS · <b>${EDGES.length.toLocaleString()}</b> EDGES${K > 1 ? ' · 가상 복제 ×' + K : ''}${(META.sources || []).length ? `<br>기준 ${META.sources.map(x => esc(x.name) + (x.commit ? ' ' + esc(x.branch) + '@' + esc(x.commit) + (x.dirty ? '+수정' : '') : '')).join(' · ')} · ${esc(META.analyzed || '')}` : ''}<span id="manline"></span>`;
-  renderManifest(); applyRuntime(RT_RAW);
+  renderManifest(); applyRuntime(RT_RAW); renderWalk();
   document.querySelectorAll('#scale button').forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.scale === K)));
   loadMs = performance.now() - t0; frameMs = 0; invalidate();
 }
 async function boot(){
   RAW = await (await fetch('atlas-data.json')).text();
   try { const r = await fetch('atlas-notes.json', {cache:'no-cache'}); if (r.ok) applyNotes(await r.json()); } catch (e){}
+  await initApi();
+  POS = WSPOS || (API.ok ? null : (() => { try { return JSON.parse(localStorage.getItem(posKey) || 'null'); } catch (e){ return null; } })());
   loadLocal(); load(1); bindInput();
+  if (API.ok && !UNITS.length) openConfig();
   $('#boot').remove();
   addEventListener('resize', () => { resize(); });
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(invalidate);
@@ -1792,6 +2037,8 @@ async function boot(){
   checkManifest(true); setInterval(() => checkManifest(false), 60000);
   checkRuntime(); setInterval(checkRuntime, 10000);
 }
+/* 시험용 손잡이: 주소에 ?debug 를 붙여 열었을 때만 안쪽 상태를 내놓는다 (tests/ui-check.js 가 쓴다) */
+if (/[?&]debug\b/.test(location.search)) window.__T = {cam, API, CFG, get state(){ return state; }, get UNITS(){ return UNITS; }, get EDGES(){ return EDGES; }, get SYS(){ return SYS; }, get SYSL(){ return SYSL; }, get META(){ return META; }, get POS(){ return POS; }};
 boot().catch(err => { $('#boot').textContent = '데이터를 불러오지 못했습니다: ' + err.message; });
 })();
 </script>
