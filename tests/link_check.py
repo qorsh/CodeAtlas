@@ -189,5 +189,113 @@ export const c = () => axios.get('/api/three');
     out = atlas(cfg, 'sync')
     check('서버 API 를 하나도 못 읽으면 그렇게 알린다', '서버가 내주는 API 를 하나도 읽지 못했습니다' in out, out[-500:])
 
+def put(path, text=''):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    open(path, 'w', encoding='utf-8').write(text)
+
+
+with tempfile.TemporaryDirectory() as ws, tempfile.TemporaryDirectory() as src:
+    print('7) 한 폴더에 서버·Android·iOS 가 함께 있고, 앱이 경로를 문자열로 들고 있는 경우')
+    put(os.path.join(src, 'Server', 'pom.xml'), '<project/>')
+    put(os.path.join(src, 'Server', 'src', 'main', 'java', 'demo', 'board', 'BoardController.java'), """package demo.board;
+
+import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.RequestMapping;
+
+@Controller
+public class BoardController {
+    @RequestMapping("/board/listData.do")
+    public String listData() { return "jsonView"; }
+
+    @RequestMapping(value = "/board/viewData.do")
+    public String viewData() { return "jsonView"; }
+
+    @RequestMapping("/board/saveAction.do")
+    public String saveAction() { return "jsonView"; }
+
+    @RequestMapping("/user/loginAction.do")
+    public String loginAction() { return "jsonView"; }
+}
+""")
+    put(os.path.join(src, 'Android', 'build.gradle'))
+    put(os.path.join(src, 'Android', 'app', 'src', 'main', 'AndroidManifest.xml'), '<manifest/>')
+    put(os.path.join(src, 'Android', 'app', 'src', 'main', 'java', 'demo', 'app', 'BoardApi.java'), """package demo.app;
+
+import java.util.Map;
+
+public class BoardApi {
+    static final String SERVER_URL = "https://m.demo.example";
+    static final String URL_LOGIN = "/user/loginAction.do";
+
+    String listUrl(Map<String, String> params) {
+        String menuId = params.get("menuId");
+        String sysId = params.get("sysId");
+        String deptId = params.get("deptId");
+        return SERVER_URL + "/board/listData.do?menuId=" + menuId + "&sysId=" + sysId + "&deptId=" + deptId;
+    }
+
+    String viewUrl(Map<String, String> params) {
+        return SERVER_URL + "/board/viewData.do" + "?docId=" + params.get("docId");
+    }
+
+    String loginUrl() { return SERVER_URL + URL_LOGIN; }
+}
+""")
+    put(os.path.join(src, 'iOS', 'Demo.xcodeproj', 'project.pbxproj'))
+    put(os.path.join(src, 'iOS', 'Demo', 'BoardAPI.swift'), """import Foundation
+
+struct ServerInfo {
+    static let baseURL = "https://m.demo.example"
+}
+
+enum BoardPath {
+    static let list = "board/listData.do"
+    static let save = "/board/saveAction.do"
+}
+
+final class BoardAPI {
+    func loadList(completion: @escaping (Data?) -> Void) {
+        let url = URL(string: "\\(ServerInfo.baseURL)/\\(BoardPath.list)")!
+        URLSession.shared.dataTask(with: url) { data, _, _ in completion(data) }.resume()
+    }
+
+    func login() {
+        var request = URLRequest(url: URL(string: ServerInfo.baseURL + "/user/loginAction.do")!)
+        request.httpMethod = "POST"
+        URLSession.shared.dataTask(with: request).resume()
+    }
+}
+""")
+    cfg = os.path.join(ws, 'atlas.config.json')
+    atlas(cfg, 'init', 'link-check-mobile')
+    atlas(cfg, 'add', src, '--name', 'mono')
+    out = atlas(cfg, 'sync')
+    meta, units, http = load(ws)
+    by = {x['id']: x for x in json.load(open(os.path.join(ws, 'atlas-manifest.json'), encoding='utf-8'))['summary']['diag']['systems']}
+    check('Android: 주소에 더해 쓰는 경로와 상수에 둔 경로가 서버 API 에 이어진다', sorted(http.get(('android', 'server'), [])) == ['ALL /board/listData.do', 'ALL /board/viewData.do', 'ALL /user/loginAction.do'], http.get(('android', 'server')))
+    check('Android: map.get("menuId") 같은 것은 호출로 세지 않는다', by['android']['calls'] == 3 and by['android']['unmatched'] == 0, by.get('android'))
+    check('iOS: 상수에 모아 둔 경로(슬래시 없이 시작하는 것 포함)가 서버 API 에 이어진다', sorted(http.get(('ios', 'server'), [])) == ['ALL /board/listData.do', 'ALL /board/saveAction.do', 'ALL /user/loginAction.do'], http.get(('ios', 'server')))
+    check('진단에 문제가 없다고 나온다', '연결 진단' not in out, out[-500:])
+    # 예전에 등록된 앱(그물이 꺼져 있던 설정)도 다음 분석 때 켜진다
+    edit(cfg, lambda d: [s.update(rules=[r for r in s['rules'] if r != 'client-slash-literal']) for s in d['systems'] if s.get('rules')])
+    out = atlas(cfg, 'sync')
+    meta, units, http = load(ws)
+    check('예전에 등록된 앱에도 다음 분석 때 적용된다', '경로 문자열도 호출 후보로 읽게 했습니다' in out and ('ios', 'server') in http and ('android', 'server') in http, out[-500:])
+
+with tempfile.TemporaryDirectory() as ws, tempfile.TemporaryDirectory() as src:
+    # 앱이 부르는 경로가 서버에 없는 경우: 경로처럼 생긴 문자열을 예로 보여 줘야 한다
+    put(os.path.join(src, 'Server', 'pom.xml'), '<project/>')
+    put(os.path.join(src, 'Server', 'src', 'main', 'java', 'demo', 'A.java'), 'package demo;\nimport org.springframework.web.bind.annotation.*;\n@RestController\npublic class A {\n    @GetMapping("/admin/list.do")\n    public String list() { return ""; }\n'
+        '    @GetMapping("/admin/view.do")\n    public String view() { return ""; }\n    @PostMapping("/admin/save.do")\n    public String save() { return ""; }\n}\n')
+    put(os.path.join(src, 'iOS', 'Demo.xcodeproj', 'project.pbxproj'))
+    put(os.path.join(src, 'iOS', 'Demo', 'Paths.swift'), 'enum Paths {\n    static let base = "https://m.demo.example"\n    static let a = "/mobile/main.do"\n    static let b = "/mobile/login.do"\n    static let c = "/mobile/notice/list.do"\n}\n')
+    cfg = os.path.join(ws, 'atlas.config.json')
+    atlas(cfg, 'init', 'link-check-mobile-miss')
+    atlas(cfg, 'add', src, '--name', 'mono')
+    out = atlas(cfg, 'sync')
+    check('앱의 경로가 서버에 없으면 경로 문자열의 예를 보여 준다', '경로로 보이는 문자열이 3개 있지만 어느 API 와도 맞지 않습니다' in out and '/mobile/main.do' in out, out[-700:])
+    finds = {f['id']: f['kind'] for f in json.load(open(os.path.join(ws, 'atlas-manifest.json'), encoding='utf-8'))['summary']['findings']}
+    check('요청을 처리하는 곳은 있는데 부르는 곳이 없는 서버를 알린다', finds.get('server') == 'no-callers' and finds.get('ios') == 'maybe' and 'API 3개를 내주는데 부르는 곳을 하나도 찾지 못했습니다' in out, (finds, out[-500:]))
+
 print('실패 %d건: %s' % (len(fails), ', '.join(fails)) if fails else '통과')
 sys.exit(1 if fails else 0)

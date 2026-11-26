@@ -1,9 +1,12 @@
 {
   "id": "client-slash-literal",
-  "title": "슬래시로 시작하는 문자열 전부를 호출 후보로 (넓은 그물)",
+  "title": "경로로 보이는 문자열 전부를 호출 후보로 (넓은 그물). 웹은 슬래시로 시작하는 것, 모바일 앱은 슬래시 없는 경로와 통째 주소도",
   "langs": [
     "ts",
-    "js"
+    "js",
+    "swift",
+    "kotlin",
+    "java"
   ],
   "auto": false,
   "rules": [

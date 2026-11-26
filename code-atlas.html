@@ -319,7 +319,7 @@ const KIND = {view:['VIEW','화면',0,'#8BEBFF'],page:['PAGE','웹 화면',0,'#8
 const EK = {use:{c:'#5AD7FF',ko:'코드 참조'},http:{c:'#FFD166',ko:'API 호출'},db:{c:'#D7A6FF',ko:'DB'},svc:{c:'#5EEAD4',ko:'외부·기기 서비스'},mirror:{c:'#E8F4FF',ko:'플랫폼 간 대응 구현'},msg:{c:'#FF9EC4',ko:'메시지·이벤트'}};
 const egroup = k => k==='ext' ? 'use' : k==='rel' ? 'db' : k;
 const FD = '"Chakra Petch","IBM Plex Sans KR",sans-serif', FM = '"JetBrains Mono",ui-monospace,Menlo,monospace', FB = '"IBM Plex Sans KR",system-ui,sans-serif';
-const TRACE = '#FF8A3D', HOLO = '#5AD7FF', RED = '#FF3B4E', OKC = '#6CF0C6';
+const TRACE = '#FF8A3D', HOLO = '#5AD7FF', RED = '#FF3B4E', OKC = '#6CF0C6', CUTC = '#FFB454';
 const CW=260, CH=46, MR=15, MAXM=12, GX=24, GY=18, MP=30, MT=64, SPD=90, STT=200, MG=80;
 const TAU = Math.PI*2;
 const clamp = (x,a,b) => Math.min(b, Math.max(a, x));
@@ -582,6 +582,9 @@ function draw(now){
     if (s.ext) ctx.setLineDash([9, 7]);          // 소스 없는 시스템(레거시)
     ctx.strokeStyle = rgba(s.color, s.ext ? 0.7 : 0.32); ctx.lineWidth = 1; ctx.strokeRect(Math.round(x)+.5, Math.round(y)+.5, w, h);
     ctx.setLineDash([]);
+    if (s.cut && w > 26){                        // 요청을 처리하는 곳은 있는데 이어진 선이 없다(또는 호출을 읽지 못했다): 주황 점선 테두리
+      ctx.setLineDash([4, 5]); ctx.strokeStyle = rgba(CUTC, 0.9); ctx.lineWidth = 1.5; ctx.strokeRect(Math.round(x)+3.5, Math.round(y)+3.5, w-6, h-6); ctx.setLineDash([]);
+    }
     const k = clamp(Math.min(w,h)*0.07, 7, 34);
     ctx.beginPath();
     ctx.moveTo(x,y+k); ctx.lineTo(x,y); ctx.lineTo(x+k,y); ctx.moveTo(x+w-k,y); ctx.lineTo(x+w,y); ctx.lineTo(x+w,y+k);
@@ -599,7 +602,8 @@ function draw(now){
       ctx.globalAlpha = aT; ctx.fillStyle = rgba(s.color,1); ctx.font = `600 ${px}px ${FD}`; ctx.textBaseline = 'alphabetic';
       ctx.fillText(s.name.toUpperCase(), tx, ty);
       ctx.font = `500 ${clamp(px*0.3,9.5,13)}px ${FM}`; ctx.fillStyle = rgba('#86B6CB',1);
-      ctx.fillText(`${s.sub}  ·  ${s.mods.length} MODULES  ·  ${s.units.length} UNITS  ·  ${s.nm.toLocaleString()} METHODS${s.open ? '  ·  열린 접점 ' + s.open : ''}`, tx+2, ty + clamp(px*0.5, 13, 22));
+      ctx.fillText(`${s.sub}  ·  ${s.mods.length} MODULES  ·  ${s.units.length} UNITS  ·  ${s.nm.toLocaleString()} METHODS${s.open ? `  ·  부르는 곳 없는 API ${s.open}/${s.routes}` : ''}`, tx+2, ty + clamp(px*0.5, 13, 22));
+      if (s.cut){ ctx.font = `600 ${clamp(px*0.34,10.5,14)}px ${FB}`; ctx.fillStyle = CUTC; ctx.fillText('연결을 찾지 못함 · ' + s.cut.short, tx+2, ty + clamp(px*0.5, 13, 22) + clamp(px*0.48, 15, 22)); }
       ctx.globalAlpha = 1;
     }
   }
@@ -716,6 +720,19 @@ function draw(now){
       ctx.fillStyle = u.i === sel ? 'rgba(20,66,94,.96)' : 'rgba(6,24,37,.9)'; ctx.fill();
       ctx.strokeStyle = rgba(col, u.i === sel ? 1 : 0.5 + Math.min(0.4, u.deg*0.012)); ctx.lineWidth = (u.i === sel ? 2 : 1)*px1; ctx.stroke();
     }
+    // 부르는 곳 없는 API: 카드 왼쪽에 끊긴 선(주황 점선 + 빈 동그라미)과 개수. 요청을 처리하는 곳은 있는데 들어오는 연결을 찾지 못했다는 뜻이다
+    if (aMem < 0.6 && z >= 0.16){
+      ctx.font = `600 ${10/z}px ${FM}`; ctx.textAlign = 'right'; ctx.textBaseline = 'middle'; ctx.strokeStyle = CUTC; ctx.fillStyle = CUTC; ctx.lineWidth = 1.3*px1;
+      for (const u of vis){
+        if (!u.openN) continue;
+        ctx.globalAlpha = aCard*(1 - aMem)*(!focus || focus.units.has(u.i) ? 1 : dimAll);
+        const yy = u.y + Math.min(u.h/2, 22), L = 30*px1;
+        ctx.beginPath(); ctx.setLineDash([4*px1, 4*px1]); ctx.moveTo(u.x - L, yy); ctx.lineTo(u.x - 2*px1, yy); ctx.stroke(); ctx.setLineDash([]);
+        ctx.beginPath(); ctx.arc(u.x - L - 4*px1, yy, 3.5*px1, 0, TAU); ctx.stroke();
+        ctx.fillText(String(u.openN), u.x - L - 11*px1, yy);
+      }
+      ctx.textAlign = 'left'; ctx.globalAlpha = 1;
+    }
     // 이름
     ctx.textBaseline = 'alphabetic';
     for (const u of vis){
@@ -769,7 +786,7 @@ function draw(now){
           ctx.fillText(fit(m.n + (m.k ? '' : '()'), u.w - 30 - Math.min(right.length, hotRt ? 40 : 22)*6.3, 10.5, 0.6), u.x+12, y+12.5);
           ctx.fillStyle = hotRt ? '#FF7A88' : m.route ? '#FFD166' : '#4F7F95'; ctx.textAlign = 'right';
           ctx.fillText(right, u.x+u.w-10, y+12.5); ctx.textAlign = 'left';
-          if (m.route){ ctx.beginPath(); ctx.moveTo(u.x-9, y+4); ctx.lineTo(u.x-1, y+8.5); ctx.lineTo(u.x-9, y+13); ctx.closePath(); if (m.open){ ctx.strokeStyle = '#FFD166'; ctx.lineWidth = px1; ctx.stroke(); } else { ctx.fillStyle = '#FFD166'; ctx.fill(); } }
+          if (m.route){ ctx.beginPath(); ctx.moveTo(u.x-9, y+4); ctx.lineTo(u.x-1, y+8.5); ctx.lineTo(u.x-9, y+13); ctx.closePath(); if (m.open){ ctx.strokeStyle = CUTC; ctx.lineWidth = 1.2*px1; ctx.stroke(); ctx.beginPath(); ctx.setLineDash([3, 3]); ctx.moveTo(u.x-36, y+8.5); ctx.lineTo(u.x-11, y+8.5); ctx.stroke(); ctx.setLineDash([]); ctx.beginPath(); ctx.arc(u.x-40, y+8.5, 3, 0, TAU); ctx.stroke(); } else { ctx.fillStyle = '#FFD166'; ctx.fill(); } }
         }
         if (u.m.length > MAXM){ ctx.fillStyle = '#4F7F95'; ctx.fillText(`+ ${u.m.length-MAXM}개 더 · 클릭하면 전체`, u.x+12, u.y+CH+n*MR+12.5); }
       }
@@ -838,10 +855,12 @@ function drawEmblem(s, now, alpha){
     ctx.font = `500 ${clamp(R*0.085, 8.5, 10.5)}px ${FM}`; ctx.fillStyle = '#86B6CB';
     ctx.fillText(`${s.units.length} UNITS`, cx, cy + px*0.1 + clamp(R*0.17, 12, 18));
     ctx.fillText(s.sub, cx, cy - px*0.95);
+    if (s.cut){ ctx.font = `600 ${clamp(R*0.09, 9.5, 11.5)}px ${FB}`; ctx.fillStyle = CUTC; ctx.fillText('연결을 찾지 못함', cx, cy + px*0.1 + clamp(R*0.17, 12, 18) + clamp(R*0.14, 12, 16)); }
   } else {
     const tiny = Math.min(s.w,s.h)*cam.z < 60, above = s.y + s.h/2 < (WORLD.y0+WORLD.y1)/2 - 200, ly = above ? SY(s.y) - (tiny ? 7 : 22) : SY(s.y+s.h) + 16;
     ctx.font = `600 ${tiny ? 10 : 11.5}px ${FD}`; ctx.fillText(s.name, cx, ly);
     if (!tiny){ ctx.font = `500 9px ${FM}`; ctx.fillStyle = '#86B6CB'; ctx.fillText(`${s.units.length} UNITS`, cx, ly + 13); }
+    if (s.cut){ ctx.font = `600 ${tiny ? 9 : 10}px ${FB}`; ctx.fillStyle = CUTC; ctx.fillText('연결을 찾지 못함', cx, ly + (tiny ? 11 : 26)); }
   }
   ctx.restore(); ctx.textAlign = 'left';
 }
@@ -1370,6 +1389,9 @@ function renderNav(el){
   el.innerHTML = `<div class="side-head"><div><span class="eyebrow">설정</span><h2>${esc(String(META.repo || '코드 아틀라스'))}</h2></div><button class="x" data-act="nav" aria-label="설정 닫기">닫기</button></div>
   <div class="side-body">
     ${API.ok ? `<section><h3>프로젝트</h3><div class="acts"><button class="act" data-act="cfg">폴더 추가 · 레거시 · 다시 분석</button></div></section>` : ''}
+    ${cutSystems().length ? `<section><h3 style="color:#FFB454">연결을 찾지 못한 곳 <em>${cutSystems().length}</em></h3><div class="xlink">${cutSystems().map(s => `<button class="xrow srow" data-sys="${esc(s.id)}" style="--c:#FFB454"><span class="k">끊김</span><span class="n">${esc(s.name)}<span class="r">${esc(s.cut.text.replace(s.name + ': ', ''))}</span></span></button>`).join('')}</div>
+      <p class="note" style="margin-top:6px">선이 없다고 관계가 없는 것은 아닙니다. 분석기가 그 연결을 읽지 못한 것입니다. 지도에서는 주황 점선으로 표시합니다.</p></section>` : ''}
+    ${UNITS.some(u => u.openN) ? `<section><h3>부르는 곳 없는 API <em>${SYSL.filter(s => !s.base).reduce((a,s) => a + s.open, 0)}</em></h3><div class="acts"><button class="act" data-act="open-apis">목록 보기</button></div></section>` : ''}
     ${pend ? `<section><h3 style="color:#FFB454">확인이 필요한 호출 <em>${pend}</em></h3><p class="note">경로가 여러 서버에 맞아 선을 긋지 않은 호출입니다.</p><div class="acts"><button class="act" data-act="pending">목록 보기</button></div></section>` : ''}
     <section><h3>배치</h3><p class="note">시스템 상자를 끌어 자리를 옮길 수 있습니다. 한 번 놓인 자리는 기억해 두고, 나중에 추가된 시스템만 빈자리에 놓습니다.</p>
       <div class="acts"><button class="act${state.arrange ? ' on' : ''}" data-act="arrange">${state.arrange ? '배치 편집 끝내기' : '시스템 자리 옮기기'}</button><button class="act${state.resetArm ? ' on' : ''}" data-act="arrange-reset">${resetLabel()}</button></div></section>
@@ -1378,13 +1400,32 @@ function renderNav(el){
       <div class="xlink" id="navlist">${list.map(s => `<button class="xrow srow" data-sys="${esc(s.id)}" data-name="${esc((s.name + ' ' + s.id).toLowerCase())}" style="--c:${s.color}"><span class="k">${kind(s)}</span><span class="n">${esc(s.name)}<span class="r">${esc(s.sub || '')}${s.sub ? ' · ' : ''}유닛 ${s.units.length}</span></span></button>`).join('')}</div></section>
   </div>`;
 }
+/* 연결을 찾지 못한 시스템. 요청을 처리하는 곳(API)은 있는데 부르는 곳이 하나도 없는 서버는 화면이 직접 가리고,
+   호출을 읽지 못한 앱은 분석기의 연결 진단(atlas-manifest.json 의 summary.findings)에서 가져온다. 지도에 주황 점선과 '연결을 찾지 못함'으로 표시한다. */
+const CUT_SHORT = {'no-callers':'API 를 부르는 곳이 없음', mismatch:'호출 경로가 어느 API 와도 안 맞음', maybe:'경로 문자열이 어느 API 와도 안 맞음', silent:'서버 호출을 읽지 못함'};
+function applyFindings(){
+  for (const s of SYSL) s.cut = null;
+  if (SCALE !== 1) return;
+  const real = SYSL.filter(s => !s.base && !s.ext && s.id !== 'device' && s.id !== 'cloud');
+  if (real.length >= 2) for (const s of real) if (s.routes >= 3 && s.open === s.routes)
+    s.cut = {kind:'no-callers', short:CUT_SHORT['no-callers'], text:`${s.name}: API ${s.routes}개를 내주는데 부르는 곳을 하나도 찾지 못했습니다. 이 서버를 부르는 앱의 호출을 읽지 못했거나 그 앱이 지도에 없습니다.`};
+  for (const f of (MAN && MAN.summary && MAN.summary.findings) || []){ const s = SYS[f.id]; if (s && CUT_SHORT[f.kind] && !s.cut) s.cut = {kind:f.kind, short:CUT_SHORT[f.kind], text:f.text}; }
+}
+const cutSystems = () => SYSL.filter(s => s.cut);
+function showOpen(){        // 부르는 곳 없는 API 가 있는 유닛 목록
+  const list = UNITS.filter(u => u.openN && !SYS[u.sys].base).map(u => ({u:u.i, s:u.openN, why:[`부르는 곳 없는 API ${u.openN}개 · ` + u.m.filter(m => m.open).slice(0, 3).map(m => m.route).join(', ')], m:u.m.findIndex(m => m.open)})).sort((a,b) => b.s - a.s);
+  if (!list.length) return;
+  cancelAI(); state.trace = null; state.impact = null; state.sel = null; state.edge = null;
+  state.hits = {q:'부르는 곳 없는 API', kind:'연결 진단', note:'요청을 처리하는 곳은 있는데, 분석한 코드 안에서 이 API 를 부르는 곳을 찾지 못했습니다. 부르는 앱의 호출을 읽지 못했거나, 그 앱이 지도에 없거나, 브라우저·외부 시스템이 부르는 API 일 수 있습니다. 지도에서는 주황 점선으로 표시됩니다.', list:list.slice(0,80), units:new Set(list.map(x => x.u)), edges:new Set()};
+  computeFocus(); renderTrace(); renderInspector(); $('#qclear').hidden = false; fitUnits(list.slice(0,80).map(x => x.u), 0.5);
+}
 const pendingCount = () => SCALE === 1 ? UNITS.reduce((a,u) => a + (u.pend ? u.pend.length : 0), 0) : 0;
 function renderPending(){
   const el = $('#pendbox'); if (!el) return;
-  const n = pendingCount(), off = SCALE === 1 && META.offmap ? META.offmap.length : 0;
-  const probs = API.ok && API.st && SCALE === 1 ? (API.st.findings || []).filter(f => f.kind !== 'prefix').length : 0;      // 연결 진단에서 확인할 것
-  if (!n && !off && !probs){ el.hidden = true; el.innerHTML = ''; return; }
-  el.innerHTML = (probs ? `<b>연결 진단: 확인할 것 ${probs}</b><br>` : '') + (n ? `<b>확인이 필요한 호출 ${n}</b><br>` : '') + (off ? `지도에 없는 주소로 가는 호출 ${off}곳<br>` : '')
+  const n = pendingCount(), off = SCALE === 1 && META.offmap ? META.offmap.length : 0, cuts = cutSystems().length;
+  if (!n && !off && !cuts){ el.hidden = true; el.innerHTML = ''; return; }
+  el.innerHTML = (cuts ? `<b>연결을 찾지 못한 시스템 ${cuts}곳</b><br>` : '') + (n ? `<b>확인이 필요한 호출 ${n}</b><br>` : '') + (off ? `지도에 없는 주소로 가는 호출 ${off}곳<br>` : '')
+    + (cuts ? `<button class="mini-act" data-act="cuts" style="color:#FFB454;border-color:#FFB454">이유 보기</button>` : '')
     + (n ? `<button class="mini-act" data-act="pending" style="color:#FFB454;border-color:#FFB454">목록 보기</button>` : '') + (API.ok ? `<button class="mini-act" data-act="cfg">설정</button>` : '');
   el.hidden = false;
 }
@@ -1628,10 +1669,10 @@ function renderConfig(){
   const X = CFG.ext || {};
   // 연결 진단: 시스템마다 내주는 API 와 부르는 호출이 얼마나 읽히고 이어졌는지. 선이 없을 때 어느 쪽이 빠졌는지 가린다
   const dg = st.summary.diag, finds = st.findings || [], probs = finds.filter(f => f.kind !== 'prefix'), flagged = new Set(probs.map(f => f.id));
-  const showEx = probs.some(f => f.kind === 'mismatch');
+  const showEx = probs.some(f => f.kind === 'mismatch' || f.kind === 'maybe');
   const dsum = dg ? dg.systems.reduce((a, x) => { a.r += x.routes; a.c += x.calls; a.l += x.linked; return a; }, {r:0, c:0, l:0}) : null;
   const drows = dg && probs.length ? dg.systems.filter(x => x.routes || x.calls || flagged.has(x.id)).map(x => `<div class="crow"><span class="nm">${esc(sysName(x.id))}<small>${[x.routes ? `내주는 API ${x.routes}` : '',
-      x.calls ? `부르는 호출 ${x.calls} 중 이어진 것 ${x.linked}${x.pending ? ` · 확인 필요 ${x.pending}` : ''}${x.external ? ` · 레거시 ${x.external}` : ''}${x.unmatched ? ` · 못 이은 것 ${x.unmatched}` : ''}` : ''].filter(Boolean).join(' · ') || '내주는 API 도, 부르는 호출도 없음'}</small>${x.routes && showEx ? `<small>API 예: ${x.route_ex.map(esc).join(' · ')}</small>` : ''}${x.unmatched && flagged.has(x.id) ? `<small style="color:#FFB454">못 이은 호출 예: ${x.call_ex.map(esc).join(' · ')}</small>` : ''}</span></div>`).join('') : '';
+      x.calls ? `부르는 호출 ${x.calls} 중 이어진 것 ${x.linked}${x.pending ? ` · 확인 필요 ${x.pending}` : ''}${x.external ? ` · 레거시 ${x.external}` : ''}${x.unmatched ? ` · 못 이은 것 ${x.unmatched}` : ''}` : ''].filter(Boolean).join(' · ') || '내주는 API 도, 부르는 호출도 없음'}</small>${x.routes && showEx ? `<small>API 예: ${x.route_ex.map(esc).join(' · ')}</small>` : ''}${x.unmatched && flagged.has(x.id) ? `<small style="color:#FFB454">못 이은 호출 예: ${x.call_ex.map(esc).join(' · ')}</small>` : ''}${x.maybe && flagged.has(x.id) && !x.linked ? `<small style="color:#FFB454">경로로 보이는 문자열 ${x.maybe}개 · 예: ${(x.maybe_ex || []).map(esc).join(' · ')}</small>` : ''}</span></div>`).join('') : '';
   const diag = dg ? `<section><h3${probs.length ? ' style="color:#FFB454"' : ''}>연결 진단 <em>${probs.length ? `확인할 것 ${probs.length}` : '눈에 띄는 문제 없음'}</em></h3>
       ${finds.map(f => `<div class="aibar${f.kind === 'prefix' ? '' : ' err'}" style="margin-bottom:6px"><span>${esc(f.text)}</span></div>`).join('')}${drows}
       <p class="note" style="margin-top:6px">내주는 API ${dsum.r.toLocaleString()}개 · 부르는 호출 ${dsum.c.toLocaleString()}개 중 이어진 것 ${dsum.l.toLocaleString()}개.${probs.some(f => f.kind === 'no-routes' || f.kind === 'silent') ? ' ' + esc(st.reads || '') : ''}</p></section>` : '';
@@ -1719,7 +1760,7 @@ async function checkManifest(first){
     const m = await (await fetch('atlas-manifest.json', {cache:'no-store'})).json();
     if (!m || !m.version) return;
     if (first || !MAN) MAN = m; else if (m.version !== MAN.version) manNew = true;
-    renderManifest();
+    renderManifest(); applyFindings(); renderPending(); if (state.nav && !(state.trace || state.hits || state.impact)) renderTrace(); invalidate();
   } catch (e){}
 }
 
@@ -1936,6 +1977,8 @@ function bindInput(){
       if (state.nav && (state.trace || state.hits || state.impact || (innerWidth <= 860 && (state.sel || state.edge != null)))) clearAll(); else renderTrace();    // 좁은 화면에서는 설명 패널과 자리가 겹치므로 선택을 푼다
     }
     else if (t.dataset.act === 'pending') showPending();
+    else if (t.dataset.act === 'open-apis') showOpen();
+    else if (t.dataset.act === 'cuts'){ clearAll(); state.nav = true; renderTrace(); }
     else if (t.dataset.act === 'arrange') setArrange(!state.arrange);
     else if (t.dataset.act === 'arrange-reset') resetArrange();
     else if (t.dataset.act === 'cfg') openConfig();
@@ -2057,7 +2100,9 @@ function load(K){
   state.sel = state.trace = state.hits = state.impact = null; focus = null; vis = []; anim = null; inertia = null; zoomTarget = null;
   prepare(buildRecords(K)); layout();
   { const bn = $('#brand-name'); if (bn) bn.textContent = String(META.repo || 'ATLAS').toUpperCase(); try { document.title = (META.repo ? META.repo + ' · ' : '') + '코드 아틀라스'; } catch (e){} }
-  for (const s of SYSL){ s.nm = s.units.reduce((a,u) => a+u.m.length, 0); s.open = s.units.reduce((a,u) => a + u.m.filter(m => m.open).length, 0); }
+  for (const u of UNITS) u.openN = u.m.reduce((a,m) => a + (m.open ? 1 : 0), 0);
+  for (const s of SYSL){ s.nm = s.units.reduce((a,u) => a+u.m.length, 0); s.open = s.units.reduce((a,u) => a + u.openN, 0); s.routes = s.units.reduce((a,u) => a + u.m.filter(m => m.route).length, 0); }
+  applyFindings();
   computeGeo();
   buildIndex(); renderTrace(); renderPending(); renderInspector(); $('#q').value = ''; $('#qclear').hidden = true;
   resize(); fitAll(true);

@@ -362,7 +362,7 @@ def resolve_calls(cfg, units, routes, http, hosts):
 
     resolved, pending, external, offmap, how_n, seen = [], [], {}, {}, {}, set()
     first, learned, unmatched, stat = [], {}, [], {}
-    loose = lambda rule: rule.startswith('client-slash-literal')         # 슬래시로 시작하는 문자열을 다 건지는 넓은 그물: 안 맞은 것은 대부분 호출이 아니다
+    loose = lambda rule, segs=(0, 0): rule.startswith('client-slash-literal') or (rule.startswith('client-') and len(segs) < 2)      # 넓은 그물, 그리고 get("id") 같은 조각 하나짜리: 안 맞은 것은 대부분 호출이 아니다
 
     def tally(cs, what):
         t = stat.setdefault(cs, dict(calls=0, linked=0, pending=0, external=0, unmatched=0, ex=[]))
@@ -466,9 +466,9 @@ def resolve_calls(cfg, units, routes, http, hosts):
     votes, real_n = {}, {}
     for i, (u, mi, method, path, rule, host, owner, segs) in enumerate(unmatched):
         cs = units[u]['sys']
-        if not loose(rule):
+        if not loose(rule, segs):
             real_n.setdefault(cs, set()).add(shape(method, segs))
-        if not segs or (loose(rule) and len(segs) < 2):
+        if not segs or (loose(rule, segs) and len(segs) < 2):
             continue
         for sid, r in last_any + ([] if segs[-1].startswith(':') else last_lit.get(segs[-1], [])):
             if sid == cs or (owner and sid != owner) or sid in L.get('never', {}).get(cs, []) or r['unit'] == u:
@@ -505,11 +505,16 @@ def resolve_calls(cfg, units, routes, http, hosts):
             fh = [h for h in file_hosts.get((cs, units[u]['file']), ()) if not _NOISE_HOST.match(h) and not owner_of(h)]
             if len(fh) == 1 and not any(host_match(fh[0], x.get('hosts', [])) for x in ext_cfg):
                 off(fh[0], cs, segs)
-        if not loose(rule):
+        shown = f"{method} /" + '/'.join('{' + g[1:] + '}' if g.startswith(':') else g for g in segs)
+        if not loose(rule, segs):
             t = tally(cs, 'unmatched')
-            shown = f"{method} /" + '/'.join('{' + g[1:] + '}' if g.startswith(':') else g for g in segs)
             if shown not in t['ex'] and len(t['ex']) < 6:
                 t['ex'].append(shown)
+        elif len(segs) >= 2:                  # 넓은 그물에 걸렸지만 어느 API 와도 안 맞은, 경로처럼 생긴 문자열. 호출일 수도 아닐 수도 있어 따로 센다
+            t = stat.setdefault(cs, dict(calls=0, linked=0, pending=0, external=0, unmatched=0, ex=[]))
+            t['maybe'] = t.get('maybe', 0) + 1
+            if shown not in t.setdefault('maybe_ex', []) and len(t['maybe_ex']) < 6:
+                t['maybe_ex'].append(shown[shown.index(' ') + 1:])
     # 연결 진단: 시스템마다 내주는 API 와 부르는 호출이 얼마나 읽혔고 얼마나 이어졌는지. 선이 없을 때 어느 쪽이 빠졌는지 가리는 근거다
     n_units, n_hosts = {}, {}
     for x in units:
@@ -517,11 +522,12 @@ def resolve_calls(cfg, units, routes, http, hosts):
     for u, h in hosts:                       # 코드에 서버 주소가 적혀 있는가: 호출을 못 읽은 앱을 가려내는 단서
         if not _NOISE_HOST.match(norm_host(h)):
             n_hosts.setdefault(units[u]['sys'], set()).add(norm_host(h))
-    diag = []
+    diag, called = [], {(r['unit'], r['member'], r['method'], r['path']) for _, _, _, r, _ in resolved}
     for y in cfg['systems']:
         rs, t = [r for r in by_sys.get(y['id'], []) if not r.get('pfx')], stat.get(y['id'], {})
-        diag.append(dict(id=y['id'], lang=y.get('lang', ''), units=n_units.get(y['id'], 0), hosts=len(n_hosts.get(y['id'], ())), routes=len(rs), route_ex=[f"{r['method']} {r['path']}" for r in rs[:5]],
-                         calls=t.get('calls', 0), linked=t.get('linked', 0), pending=t.get('pending', 0), external=t.get('external', 0), unmatched=t.get('unmatched', 0), call_ex=t.get('ex', [])))
+        diag.append(dict(id=y['id'], lang=y.get('lang', ''), units=n_units.get(y['id'], 0), hosts=len(n_hosts.get(y['id'], ())), routes=len(rs),
+                         open=sum(1 for r in rs if (r['unit'], r['member'], r['method'], r['path']) not in called), route_ex=[f"{r['method']} {r['path']}" for r in rs[:5]],
+                         calls=t.get('calls', 0), linked=t.get('linked', 0), pending=t.get('pending', 0), external=t.get('external', 0), unmatched=t.get('unmatched', 0), call_ex=t.get('ex', []), maybe=t.get('maybe', 0), maybe_ex=t.get('maybe_ex', [])))
     # 같은 서버를 두 번 넣은 것으로 보이는 쌍: 라우트 목록이 통째로 같다
     sets = {sid: frozenset((r['method'], tuple(':' if g.startswith(':') else g for g in r['segs'])) for r in rs if not r.get('pfx')) for sid, rs in by_sys.items()}
     ids = sorted(sid for sid, v in sets.items() if len(v) >= 3)
@@ -726,6 +732,7 @@ def link(cfg, results, sources, rules):
                    by_kind={k: sum(1 for e in edges if e['k'] == k) for k in sorted(set(e['k'] for e in edges))},
                    routes=len(routes), open_routes=len(open_routes), http_candidates=len(http),
                    resolved=api['how'], pending=len(pending), offmap=len(api['offmap']), twins=api['twins'], diag=api['diag'],
+                   findings=[dict(kind=k, id=sid, text=t) for k, sid, t in diag_findings(dict(diag=api['diag']), {s['id']: s['name'] for s in cfg['systems']})],
                    external={x['id']: dict(calls=len(api['external'].get(x['id'], [])), name=x.get('name', x['id'])) for x in ext_cfg},
                    unmatched_db=sum(1 for x in dbacc if not any(k[1] == norm_table(x[3]) for k in table_idx)))
     return [meta] + units + [dict(rt='edge', **e) for e in edges], summary
@@ -772,8 +779,8 @@ def cmd_sync(cfg, args):
             info['prev_commit'] = prev_commits.get(src['name'], '')
             sources.append(info)
         roots = {s['name']: source_root(cfg, s) for s in cfg['sources']}
-        renamed = upgrade_names(cfg)
-        if renamed:
+        renamed, widened = upgrade_names(cfg), upgrade_rules(cfg)
+        if renamed or widened:
             save_config(cfg)
         # 문법 패키지가 없어 읽을 수 없는 시스템은 건너뛰고 알린다. 설정이 "parser": "tree-sitter" 면 건너뛰지 않고 멈춘다.
         table = language_table(cfg.get('parser', 'auto'))
@@ -822,6 +829,8 @@ def cmd_sync(cfg, args):
     for s in sources:
         moved = f"{s['prev_commit']} → " if s['prev_commit'] and s['prev_commit'] != s['commit'] else ''
         print(f"소스 {s['name']}: " + (f"{s['branch']}@{moved}{s['commit']}{' (미커밋 수정 있음)' if s['dirty'] else ''}" if s['commit'] else 'git 저장소 아님 (현재 폴더 내용 기준)'))
+    if widened:
+        print(f"  모바일 앱 {', '.join(widened)}: 코드에 적힌 경로 문자열도 호출 후보로 읽게 했습니다.")
     for sid, old, new in renamed:
         print(f"  시스템 이름: {old} → {new}  (앱 이름을 찾아 바꿨습니다. 설정에서 고칠 수 있습니다)")
     for r in report:
@@ -899,6 +908,17 @@ def app_label(kind, name):
     return (name if plat.lower() in name.lower() else f'{name} {plat}') if name else f'{plat} 앱'
 
 
+def upgrade_rules(cfg):
+    """예전에 등록된 모바일 앱에도 '경로 문자열 그물'을 켠다. 새로 추가하는 앱에는 detect 가 처음부터 넣는다."""
+    changed = []
+    for s in cfg['systems']:
+        rules = s.get('rules') or []
+        if ('client-path-arg' in rules or 'client-base-url' in rules) and 'client-slash-literal' not in rules and 'client-slash-literal' not in (s.get('rules_off') or []):
+            s['rules'] = rules + ['client-slash-literal']
+            changed.append(s['id'])
+    return changed
+
+
 def upgrade_names(cfg):
     """예전 이름('iOS 앱' · 'Android 앱')으로 등록된 모바일 시스템을 앱 이름으로 바꾼다. 사람이 고친 이름은 건드리지 않는다."""
     changed = []
@@ -940,7 +960,7 @@ def detect(root, name):
             roots = [rel(os.path.join(cur, d)) for d in dirs if not d.endswith(('.xcodeproj', 'Tests', 'UITests')) and has(os.path.join(cur, d), '.swift')]
             tests = [[rel(os.path.join(cur, d)), '.swift'] for d in dirs if d.endswith('Tests') and not d.endswith('UITests')]
             if roots:
-                found.append(dict(id='ios', name=app_label('ios', app_name('ios', os.path.join(root, roots[0]), cur)), sub='Swift', lang='swift', ns='apple', roots=roots, tests=tests, rules=['client-path-arg']))
+                found.append(dict(id='ios', name=app_label('ios', app_name('ios', os.path.join(root, roots[0]), cur)), sub='Swift', lang='swift', ns='apple', roots=roots, tests=tests, rules=['client-path-arg', 'client-slash-literal']))
             dirs[:] = []
         elif any(f in ('build.gradle', 'build.gradle.kts', 'pom.xml') for f in fs):
             for lang, sub, ext in (('kotlin', 'src/main/kotlin', '.kt'), ('kotlin', 'src/main/java', '.kt'), ('java', 'src/main/java', '.java')):   # Android 는 Kotlin 을 java 폴더에 두기도 한다
@@ -949,7 +969,7 @@ def detect(root, name):
                     android = any(os.path.exists(os.path.join(root, r, '..', 'AndroidManifest.xml')) for r in roots)
                     found.append(dict(id='android' if android else base.lower(), name=app_label('android', app_name('android', os.path.join(root, roots[0]), cur)) if android else base, sub=('Kotlin' if lang == 'kotlin' else 'Java') + (' · Android' if android else ' · JVM'),
                                       lang=lang, roots=roots, tests=[[r.replace('/main/', '/test/'), ext] for r in roots if os.path.isdir(os.path.join(root, r.replace('/main/', '/test/')))],
-                                      rules=['client-base-url'] if android else []))
+                                      rules=['client-base-url', 'client-slash-literal'] if android else []))
             dirs[:] = []
         elif 'package.json' in fs:
             pkg = open(os.path.join(cur, 'package.json'), encoding='utf-8', errors='replace').read()
@@ -977,7 +997,7 @@ def detect(root, name):
 
 
 APP_LANGS = ('swift', 'kotlin', 'java', 'ts', 'js')
-READS = '읽을 수 있는 서버 API: Spring MVC 어노테이션 · NestJS · Express · FastAPI·Flask · Go.  앱 호출: Retrofit 어노테이션 · "$BASE_URL/경로" 꼴 · get("경로")·request("경로") 꼴 · axios·fetch · requests.'
+READS = '읽을 수 있는 서버 API: Spring MVC 어노테이션 · NestJS · Express · FastAPI·Flask · Go.  앱 호출: Retrofit 어노테이션 · axios·fetch · requests · 모바일 앱 코드에 적힌 경로 문자열("/a/b.do" · "a/b" · "https://주소/a/b").'
 
 
 def diag_findings(summary, names):
@@ -993,8 +1013,12 @@ def diag_findings(summary, names):
         out.append(('prefix', p['frm'], f"{nm(p['frm'])} → {nm(p['to'])}: " + (f"호출 경로 앞의 {p['prefix']} 를 떼면 맞아서 {p['n']}개를 이었습니다." if p['kind'] == 'strip'
                                                                               else f"호출에는 없는 {p['prefix']} 가 API 경로 앞에 붙어 있어, 붙여서 {p['n']}개를 이었습니다.")))
     for x in S:
+        if x['routes'] >= 3 and x.get('open') == x['routes'] and len(S) >= 2:      # 요청을 처리하는 곳은 있는데 거기로 들어오는 연결이 하나도 없다
+            out.append(('no-callers', x['id'], f"{nm(x['id'])}: API {x['routes']}개를 내주는데 부르는 곳을 하나도 찾지 못했습니다. 이 서버를 부르는 앱의 호출을 읽지 못했거나 그 앱이 지도에 없습니다."))
         if x['calls'] >= 3 and not x['linked'] and not x['pending'] and not x['external']:
             out.append(('mismatch', x['id'], f"{nm(x['id'])}: 호출 {x['calls']}개를 읽었지만 어느 API 와도 경로가 맞지 않습니다. 호출 예와 API 예를 견줘 보세요."))
+        elif not x['routes'] and not x['linked'] and not x['pending'] and not x['external'] and x.get('maybe', 0) >= 3 and x['lang'] in APP_LANGS and sum(y['routes'] for y in S):
+            out.append(('maybe', x['id'], f"{nm(x['id'])}: 경로로 보이는 문자열이 {x['maybe']}개 있지만 어느 API 와도 맞지 않습니다. 이 앱이 부르는 서버가 지도에 없거나 경로가 다를 수 있습니다. 문자열 예와 API 예를 견줘 보세요."))
         elif not x['routes'] and not x['calls'] and x.get('hosts') and x['lang'] in APP_LANGS:      # 코드에 서버 주소는 적혀 있는데 호출이 하나도 안 잡혔다
             out.append(('silent', x['id'], f"{nm(x['id'])}: 코드에 서버 주소가 {x['hosts']}개 적혀 있는데 API 호출은 하나도 잡히지 않았습니다. 호출 방식을 아직 읽지 못하는 것으로 보입니다."))
     return out
@@ -1009,13 +1033,15 @@ def print_diag(summary, names, full=False):
     for x in d['systems']:
         if not (x['routes'] or x['calls'] or full or x['id'] in flagged):
             continue
-        parts = ([f"내주는 API {x['routes']}개"] if x['routes'] else []) + ([f"부르는 호출 {x['calls']}개 중 이어진 것 {x['linked']}" + (f" · 확인 필요 {x['pending']}" if x['pending'] else '')
+        parts = ([f"내주는 API {x['routes']}개" + (f" (부르는 곳 없는 것 {x['open']})" if x.get('open') else '')] if x['routes'] else []) + ([f"부르는 호출 {x['calls']}개 중 이어진 것 {x['linked']}" + (f" · 확인 필요 {x['pending']}" if x['pending'] else '')
                  + (f" · 레거시 {x['external']}" if x['external'] else '') + (f" · 못 이은 것 {x['unmatched']}" if x['unmatched'] else '')] if x['calls'] else [])
         print(f"  {names.get(x['id'], x['id'])}: " + (' · '.join(parts) or '내주는 API 도, 부르는 호출도 없음'))
-        if x['routes'] and (full or any(k == 'mismatch' for k, _, _ in finds)):
+        if x['routes'] and (full or any(k in ('mismatch', 'maybe') for k, _, _ in finds)):
             print('      API 예: ' + ', '.join(x['route_ex']))
         if x['unmatched'] and (full or x['id'] in flagged):
             print('      못 이은 호출 예: ' + ', '.join(x['call_ex']))
+        if x.get('maybe') and (full or x['id'] in flagged) and not x['linked']:
+            print(f"      경로로 보이는 문자열 {x['maybe']}개 · 예: " + ', '.join(x['maybe_ex']))
     for kind, sid, text in finds:
         print('  → ' + text)
     if any(k in ('no-routes', 'silent') for k, _, _ in finds):

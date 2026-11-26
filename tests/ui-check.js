@@ -182,6 +182,7 @@ setTimeout(() => { console.log(out.join('\n')); console.log('시간 초과'); do
   ok('휴대폰 폭에서 설정 패널이 화면 안에 들어온다', await ev(`(() => { const r = document.querySelector('#cfgbox').getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth + 1; })()`));
   await snap('8-phone-settings');
 
+  ok('연결이 다 이어진 예에서는 끊김 표시가 없다', await ev(`__T.SYSL.every(s => !s.cut) && !document.querySelector('#pendbox').innerText.includes('연결을 찾지 못한')`), await text('#pendbox'));
   ok('화면에서 난 오류가 없다', errors.length === 0, errors.slice(0, 3).join(' | '));
   console.log(out.join('\n'));
   const bad = out.filter(l => l.includes('실패')).length;

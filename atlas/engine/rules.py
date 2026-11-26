@@ -310,6 +310,12 @@ _KOTLIN_URL = re.compile(r'(?:\b(?P<fn>fetch|get|post|request)\(\s*"(?P<arg>[a-z
                          + r'\$\{?[A-Za-z_.]*BASE_URL\}?)(?P<path>/[A-Za-z0-9\-/_:.{}$]*))')
 
 
+_CLIENTISH = re.compile(r'(?i)(api|client|http|rest|remote|network|service|server|request|retrofit|session|gateway)')
+_MIME = re.compile(r'^(application|text|image|audio|video|multipart|font|message|model)/')
+_REL_PATH = re.compile(r'^[A-Za-z][\w\-]*(?:/[\w\-.{}$()\\:]+)+/?$')            # api/orders/{id} · am/menu/list.do 처럼 슬래시 없이 시작하는 경로
+_URL_PATH = re.compile(r'^https?://[A-Za-z0-9.\-]+(?::\d{2,5})?/[^\s]+$')
+
+
 def heur_path_arg(R, rid, i, u, fi, items):
     """get("orders/recent") · appendingPathComponent("x") 처럼 경로 조각을 인자로 넘기는 호출."""
     src = fi['src']
@@ -342,6 +348,11 @@ def heur_base_url(R, rid, i, u, fi, items):
             pos = a + m.start()
             if in_comment(fi, pos):
                 continue
+            if m.group('arg') and '/' not in m.group('arg'):
+                # get("menuId") 처럼 조각 하나짜리 인자: 맵·JSON 에서 값을 꺼내는 호출이 대부분이다. 받는 쪽 이름이 통신 객체로 보일 때만 호출로 친다
+                recv = re.search(r'([A-Za-z_]\w*)\s*(?:\?|!!)?\.\s*$', seg[max(0, m.start() - 60):m.start()])
+                if recv and not _CLIENTISH.search(recv.group(1)):
+                    continue
             path = m.group('arg') or template_to_path(m.group('path'), 'kotlin')
             if m.groupdict().get('host'):          # 주소가 적혀 있으면 함께 넘긴다. 어느 서버로 가는 호출인지 연결 단계에서 가린다
                 path = m.group('host') + path
@@ -353,16 +364,20 @@ def heur_base_url(R, rid, i, u, fi, items):
 
 
 def heur_slash_literal(R, rid, i, u, fi, items):
-    """'/api/orders' 처럼 슬래시로 시작하는 문자열 전부를 후보로 본다. 실제 라우트와 맞는 것만 연결 단계에서 남는다."""
-    src = fi['src']
+    """'/api/orders' 처럼 슬래시로 시작하는 문자열 전부를 후보로 본다. 실제 라우트와 맞는 것만 연결 단계에서 남는다.
+    모바일 앱(Swift·Kotlin·Java)은 경로를 상수에 모아 두거나 주소에 더해 쓰는 일이 많아, 통신 라이브러리의 호출 꼴을 몰라도 이 그물로 잡는다.
+    그래서 그쪽에서는 슬래시 없이 시작하는 경로("am/menu/list.do")와 주소가 통째로 적힌 문자열("https://host/x/y")도 함께 건진다."""
+    src, app = fi['src'], fi['lang'] in ('swift', 'kotlin', 'java')
     for a, b in u['ranges']:
         for q, end in fi['strings']:
             if not (a <= q <= b) or src[q] not in '\'"`':
                 continue
             raw = src[q + 1:end - 1]
-            if not re.match(r'/[a-z]', raw) or '.html' in raw or ' ' in raw.split('${')[0]:
+            if '.html' in raw or ' ' in raw.split('${')[0]:
                 continue
-            path = template_to_path(raw, 'js')
+            if not re.match(r'/[A-Za-z]' if app else r'/[a-z]', raw) and not (app and (_URL_PATH.match(raw) or (_REL_PATH.match(raw) and not _MIME.match(raw)))):
+                continue
+            path = template_to_path(raw, 'kotlin' if fi['lang'] in ('kotlin', 'java') else 'js')
             near = src[end:end + 220]
             if path.endswith('/') and near.lstrip().startswith('+'):
                 path += ':p'
