@@ -1829,6 +1829,11 @@ def main():
     p.add_argument('--every', type=float, default=3); p.add_argument('--last', type=int); p.add_argument('--abnormal', type=int, default=400); p.add_argument('--regex')
     p.add_argument('--strip-prefix', action='append'); p.add_argument('--label'); p.add_argument('--clear', action='store_true')
     args = ap.parse_args()
+    ws_root = os.path.join(os.path.dirname(HERE), 'workspaces')
+    have = sorted(d for d in os.listdir(ws_root) if os.path.exists(os.path.join(ws_root, d, 'atlas.config.json'))) if os.path.isdir(ws_root) else []
+    if not args.workspace and not args.config and not os.path.exists('atlas.config.json') and args.cmd != 'init' and len(have) == 1:
+        args.workspace = have[0]          # 작업 공간이 하나뿐이면 -w 를 생략해도 그것을 쓴다
+        print(f'작업 공간 {have[0]} 을(를) 씁니다.', file=sys.stderr)
     if args.workspace and not args.config:
         args.config = os.path.join(os.path.dirname(HERE), 'workspaces', args.workspace, 'atlas.config.json')
     args.config = args.config or 'atlas.config.json'
@@ -1843,7 +1848,11 @@ def main():
         print(f'{args.config} 를 만들었습니다. add 로 소스를 추가하세요.')
         return
     if not os.path.exists(args.config):
-        raise SystemExit(f'{args.config} 가 없습니다. 먼저 init 을 실행하세요 (예: python3 atlas/atlas.py -w <이름> init).')
+        if args.workspace and have:       # 이름을 잘못 적은 경우가 대부분이다: 있는 이름을 알려 준다
+            raise SystemExit(f"작업 공간 '{args.workspace}' 이(가) 없습니다. 지금 있는 작업 공간: {', '.join(have)}\n"
+                             f"  그중 하나를 쓰려면: python3 atlas/atlas.py -w {have[0]} {args.cmd} …\n  새로 만들려면: python3 atlas/atlas.py -w {args.workspace} init")
+        raise SystemExit(f'{args.config} 가 없습니다. 먼저 init 을 실행하세요 (예: python3 atlas/atlas.py -w <이름> init).'
+                         + (f" 지금 있는 작업 공간: {', '.join(have)} (-w <이름> 으로 고릅니다)" if have else ''))
     cfg = load_config(args.config)
     {'add': cmd_add, 'sync': cmd_sync, 'status': cmd_status, 'diagnose': cmd_diagnose, 'site': cmd_site, 'open': cmd_open, 'ingest': cmd_ingest}[args.cmd](cfg, args)
 
