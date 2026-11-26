@@ -692,6 +692,9 @@ def cmd_sync(cfg, args):
             info['prev_commit'] = prev_commits.get(src['name'], '')
             sources.append(info)
         roots = {s['name']: source_root(cfg, s) for s in cfg['sources']}
+        renamed = upgrade_names(cfg)
+        if renamed:
+            save_config(cfg)
         # 문법 패키지가 없어 읽을 수 없는 시스템은 건너뛰고 알린다. 설정이 "parser": "tree-sitter" 면 건너뛰지 않고 멈춘다.
         table = language_table(cfg.get('parser', 'auto'))
         skipped = [dict(id=s['id'], lang=s['lang'], need=table[s['lang']].split(': ')[1]) for s in cfg['systems']
@@ -739,6 +742,8 @@ def cmd_sync(cfg, args):
     for s in sources:
         moved = f"{s['prev_commit']} → " if s['prev_commit'] and s['prev_commit'] != s['commit'] else ''
         print(f"소스 {s['name']}: " + (f"{s['branch']}@{moved}{s['commit']}{' (미커밋 수정 있음)' if s['dirty'] else ''}" if s['commit'] else 'git 저장소 아님 (현재 폴더 내용 기준)'))
+    for sid, old, new in renamed:
+        print(f"  시스템 이름: {old} → {new}  (앱 이름을 찾아 바꿨습니다. 설정에서 고칠 수 있습니다)")
     for r in report:
         print(f"  묶음 {r['id']:<22} {'다시 분석' if r['status'] == 'analyzed' else '재사용   '} 파일 {r['files']:>4} · 유닛 {r['units']:>4} · {r['ms']:>5}ms · 파서 {r.get('parser', '내장')}")
     for x in skipped:
@@ -762,6 +767,69 @@ def cmd_sync(cfg, args):
         c = manifest['change_counts']
         print(f"새 버전 {manifest['version']} · 추가 {c['added']} · 삭제 {c['removed']} · 변경 {c['changed']} · {time.time() - t0:.1f}초")
     return manifest
+
+
+def app_name(kind, start, top):
+    """모바일 앱의 이름. start(소스 폴더)에서 top(저장소 맨 위)까지 올라가며 찾는다.
+    화면에 보이는 이름(iOS 의 표시 이름, Android 의 app_name)을 먼저 쓰고, 없으면 프로젝트 이름을 쓴다. 못 찾으면 빈 문자열."""
+    def grab(path, pattern):
+        try:
+            text = open(path, encoding='utf-8', errors='replace').read(800_000)
+        except OSError:
+            return ''
+        for m in re.finditer(pattern, text):
+            v = m.group(1).strip().strip('"').strip()
+            if v and not re.search(r'[$@{}]', v):       # $(PRODUCT_NAME) · @string/… 처럼 다른 곳을 가리키는 값은 건너뛴다
+                return v
+        return ''
+    d, top, fallback = os.path.abspath(start), os.path.abspath(top), ''
+    while True:
+        if kind == 'ios':
+            projects = sorted(glob.glob(os.path.join(d, '*.xcodeproj')))
+            for proj in projects:
+                shown = grab(os.path.join(proj, 'project.pbxproj'), r'INFOPLIST_KEY_CFBundleDisplayName\s*=\s*([^;\n]+);')
+                if shown:
+                    return shown
+                fallback = fallback or os.path.splitext(os.path.basename(proj))[0]
+            shown = grab(os.path.join(d, 'Info.plist'), r'<key>CFBundleDisplayName</key>\s*<string>([^<]*)</string>')
+            if shown:
+                return shown
+            fallback = fallback or grab(os.path.join(d, 'Package.swift'), r'\bname:\s*"([^"]+)"')
+            if projects:
+                break
+        else:
+            shown = grab(os.path.join(d, 'res', 'values', 'strings.xml'), r'<string\s+name="app_name"[^>]*>([^<]+)</string>')
+            if shown:
+                return shown
+            for f in ('settings.gradle.kts', 'settings.gradle'):
+                fallback = fallback or grab(os.path.join(d, f), r'rootProject\.name\s*=\s*["\']([^"\']+)["\']')
+        if d == top or os.path.dirname(d) == d or not d.startswith(top):
+            break
+        d = os.path.dirname(d)
+    return fallback
+
+
+OLD_APP_NAMES = {'iOS 앱': 'ios', 'Android 앱': 'android'}      # 예전에 붙이던 이름. 앱이 여럿이면 구분이 안 된다
+
+
+def app_label(kind, name):
+    """지도에 보일 모바일 시스템 이름: 앱 이름 + 플랫폼. 앱 이름을 못 찾으면 예전처럼 플랫폼만 적는다."""
+    plat = 'iOS' if kind == 'ios' else 'Android'
+    return (name if plat.lower() in name.lower() else f'{name} {plat}') if name else f'{plat} 앱'
+
+
+def upgrade_names(cfg):
+    """예전 이름('iOS 앱' · 'Android 앱')으로 등록된 모바일 시스템을 앱 이름으로 바꾼다. 사람이 고친 이름은 건드리지 않는다."""
+    changed = []
+    tops = {s['name']: source_root(cfg, s) for s in cfg['sources']}
+    for s in cfg['systems']:
+        kind, top = OLD_APP_NAMES.get(s['name']), tops.get(s['source'])
+        if kind and top and os.path.isdir(top) and s.get('roots'):
+            new = app_label(kind, app_name(kind, os.path.join(top, s['roots'][0]), top))
+            if new != s['name']:
+                changed.append((s['id'], s['name'], new))
+                s['name'] = new
+    return changed
 
 
 def detect(root, name):
@@ -791,14 +859,14 @@ def detect(root, name):
             roots = [rel(os.path.join(cur, d)) for d in dirs if not d.endswith(('.xcodeproj', 'Tests', 'UITests')) and has(os.path.join(cur, d), '.swift')]
             tests = [[rel(os.path.join(cur, d)), '.swift'] for d in dirs if d.endswith('Tests') and not d.endswith('UITests')]
             if roots:
-                found.append(dict(id='ios', name='iOS 앱', sub='Swift', lang='swift', ns='apple', roots=roots, tests=tests, rules=['client-path-arg']))
+                found.append(dict(id='ios', name=app_label('ios', app_name('ios', os.path.join(root, roots[0]), cur)), sub='Swift', lang='swift', ns='apple', roots=roots, tests=tests, rules=['client-path-arg']))
             dirs[:] = []
         elif any(f in ('build.gradle', 'build.gradle.kts', 'pom.xml') for f in fs):
             for lang, sub, ext in (('kotlin', 'src/main/kotlin', '.kt'), ('kotlin', 'src/main/java', '.kt'), ('java', 'src/main/java', '.java')):   # Android 는 Kotlin 을 java 폴더에 두기도 한다
                 roots = sorted(rel(p) for p in glob.glob(os.path.join(cur, '**', sub), recursive=True) if has(p, ext, 12))
                 if roots:
                     android = any(os.path.exists(os.path.join(root, r, '..', 'AndroidManifest.xml')) for r in roots)
-                    found.append(dict(id='android' if android else base.lower(), name='Android 앱' if android else base, sub=('Kotlin' if lang == 'kotlin' else 'Java') + (' · Android' if android else ' · JVM'),
+                    found.append(dict(id='android' if android else base.lower(), name=app_label('android', app_name('android', os.path.join(root, roots[0]), cur)) if android else base, sub=('Kotlin' if lang == 'kotlin' else 'Java') + (' · Android' if android else ' · JVM'),
                                       lang=lang, roots=roots, tests=[[r.replace('/main/', '/test/'), ext] for r in roots if os.path.isdir(os.path.join(root, r.replace('/main/', '/test/')))],
                                       rules=['client-base-url'] if android else []))
             dirs[:] = []
@@ -1176,6 +1244,8 @@ def make_server(cfg, port=0):
             path = os.path.abspath(os.path.expanduser(str(body.get('path') or '~')))
             if body.get('child'):
                 path = os.path.join(path, os.path.basename(str(body['child'])))
+            if body.get('parent'):
+                path = os.path.dirname(path)
             if not os.path.isdir(path):
                 raise SystemExit(f'폴더가 아닙니다: {path}')
             try:
@@ -1184,6 +1254,9 @@ def make_server(cfg, port=0):
                 raise SystemExit(f'이 폴더를 열 수 없습니다: {e.strerror}')
             names = [n for n in names if not n.startswith('.')]
             out = dict(path=path, parent=os.path.dirname(path) if os.path.dirname(path) != path else '', dirs=[n for n in names if os.path.isdir(os.path.join(path, n))][:600])
+            have = {os.path.realpath(x['path']): x['name'] for x in c['sources'] if x.get('path')}         # 이미 추가한 폴더는 표시해 두 번 넣지 않게 한다
+            out['added'] = [n for n in out['dirs'] if os.path.realpath(os.path.join(path, n)) in have]
+            out['here'] = have.get(os.path.realpath(path), '')
             if body.get('files'):
                 out['files'] = [n for n in names if os.path.isfile(os.path.join(path, n))][:600]
             return out

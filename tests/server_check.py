@@ -28,6 +28,41 @@ def check(name, ok, detail=''):
         fails.append(name)
 
 
+def put(path, text=''):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    open(path, 'w', encoding='utf-8').write(text)
+
+
+print('모바일 앱 이름')
+with tempfile.TemporaryDirectory() as top:
+    # iOS: 표시 이름이 프로젝트 설정에 있다
+    put(os.path.join(top, 'a', 'MyShop.xcodeproj', 'project.pbxproj'), 'INFOPLIST_KEY_CFBundleDisplayName = "마이숍";\n')
+    put(os.path.join(top, 'a', 'MyShop', 'App.swift'), 'struct App {}\n')
+    # iOS: 표시 이름이 다른 값을 가리키면 프로젝트 이름을 쓴다
+    put(os.path.join(top, 'b', 'Rider.xcodeproj', 'project.pbxproj'), 'INFOPLIST_KEY_CFBundleDisplayName = "$(PRODUCT_NAME)";\n')
+    put(os.path.join(top, 'b', 'Rider', 'App.swift'), 'struct App {}\n')
+    # Android: strings.xml 의 app_name
+    put(os.path.join(top, 'c', 'build.gradle.kts'))
+    put(os.path.join(top, 'c', 'settings.gradle.kts'), 'rootProject.name = "shop-android"\n')
+    put(os.path.join(top, 'c', 'app', 'src', 'main', 'AndroidManifest.xml'), '<manifest/>')
+    put(os.path.join(top, 'c', 'app', 'src', 'main', 'kotlin', 'shop', 'Main.kt'), 'class Main\n')
+    put(os.path.join(top, 'c', 'app', 'src', 'main', 'res', 'values', 'strings.xml'), '<resources><string name="app_name">마이숍</string></resources>')
+    # Android: app_name 이 없으면 프로젝트 이름
+    put(os.path.join(top, 'd', 'build.gradle'))
+    put(os.path.join(top, 'd', 'settings.gradle'), "rootProject.name = 'Courier'\n")
+    put(os.path.join(top, 'd', 'app', 'src', 'main', 'AndroidManifest.xml'), '<manifest/>')
+    put(os.path.join(top, 'd', 'app', 'src', 'main', 'java', 'x', 'Main.kt'), 'class Main\n')
+    names = {k: [y['name'] for y in atlas.detect(os.path.join(top, k), k)] for k in 'abcd'}
+    check('iOS: 화면에 보이는 이름 + 플랫폼', names['a'] == ['마이숍 iOS'], names['a'])
+    check('iOS: 표시 이름이 변수면 프로젝트 이름', names['b'] == ['Rider iOS'], names['b'])
+    check('Android: app_name + 플랫폼', names['c'] == ['마이숍 Android'], names['c'])
+    check('Android: app_name 이 없으면 프로젝트 이름', names['d'] == ['Courier Android'], names['d'])
+    old = dict(_path=os.path.join(top, 'cfg.json'), _dir=top, sources=[dict(name='a', path=os.path.join(top, 'a')), dict(name='c', path=os.path.join(top, 'c'))],
+               systems=[dict(id='ios', name='iOS 앱', source='a', roots=['MyShop']), dict(id='android', name='Android 앱', source='c', roots=['app/src/main/kotlin']),
+                        dict(id='a-ios', name='내가 고친 이름', source='a', roots=['MyShop'])])
+    check('예전 이름으로 등록된 것은 앱 이름으로 바뀌고, 사람이 고친 이름은 그대로', [x[2] for x in atlas.upgrade_names(old)] == ['마이숍 iOS', '마이숍 Android'] and old['systems'][2]['name'] == '내가 고친 이름', old['systems'])
+
+print('로컬 서버')
 with tempfile.TemporaryDirectory() as ws:
     cfg_path = os.path.join(ws, 'atlas.config.json')
     json.dump(dict(name='server-check', out='.', store='atlas-store', api_hosts=[], sources=[], systems=[], link={}), open(cfg_path, 'w', encoding='utf-8'))
@@ -67,6 +102,9 @@ with tempfile.TemporaryDirectory() as ws:
     for name in ('shop', 'booking', 'backoffice'):
         code, out = post('add', dict(path=os.path.join(REPO, 'fixtures', name)))
         check(f'폴더 추가: {name}', code == 200 and out.get('added'), out)
+    ls = post('ls', dict(path=os.path.join(REPO, 'fixtures')))[1]
+    check('폴더 목록: 이미 추가한 폴더를 표시한다', ls.get('added') == ['backoffice', 'booking', 'shop'] and post('ls', dict(path=os.path.join(REPO, 'fixtures', 'shop')))[1].get('here') == 'shop', ls)
+    check('폴더 목록: 윗폴더로 간다', post('ls', dict(path=os.path.join(REPO, 'fixtures', 'shop'), parent=True))[1].get('path', '').endswith('fixtures'))
     code, out = post('add', dict(path=os.path.join(REPO, 'fixtures', 'shop')))
     check('같은 폴더를 두 번 넣으면 막는다', code == 400 and '이미 추가된' in out.get('error', ''), out)
 
@@ -81,6 +119,7 @@ with tempfile.TemporaryDirectory() as ws:
     check('없는 시스템은 막는다', post('link', dict(**{'from': 'nope'}, to='booking-server', mode='calls'))[0] == 400)
     check('서버 주소 저장', post('system', dict(id='payment-service', hosts='payment-service, pay.example.com'))[0] == 200
           and next(y for y in atlas.load_config(cfg_path)['systems'] if y['id'] == 'payment-service')['hosts'] == ['payment-service', 'pay.example.com'])
+    check('시스템 이름 고치기', post('system', dict(id='mobile', name='쇼핑 앱'))[0] == 200 and next(y for y in atlas.load_config(cfg_path)['systems'] if y['id'] == 'mobile')['name'] == '쇼핑 앱')
     check('배치 저장: 작업 공간 메모에 적힌다', post('layout', dict(positions={'web': [100, -200]}))[1].get('saved') == 1
           and json.load(open(os.path.join(ws, 'atlas-notes.json'), encoding='utf-8'))['positions'] == {'web': [100.0, -200.0]})
     check('배치 지우기', post('layout', dict(positions={}))[1].get('saved') == 0 and 'positions' not in json.load(open(os.path.join(ws, 'atlas-notes.json'), encoding='utf-8')))

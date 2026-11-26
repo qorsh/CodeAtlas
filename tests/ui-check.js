@@ -32,6 +32,9 @@ setTimeout(() => { console.log(out.join('\n')); console.log('시간 초과'); do
   const extra = path.join(tmp, 'more', 'extra-web'); fs.mkdirSync(path.join(extra, 'src'), {recursive:true});
   fs.writeFileSync(path.join(extra, 'package.json'), '{"name": "extra-web", "dependencies": {"react": "18.3.1"}}');
   fs.copyFileSync(path.join(REPO, 'fixtures', 'booking', 'booking-web', 'src', 'api.ts'), path.join(extra, 'src', 'api.ts'));
+  const extra2 = path.join(tmp, 'more', 'extra-two'); fs.mkdirSync(path.join(extra2, 'src'), {recursive:true});
+  fs.writeFileSync(path.join(extra2, 'package.json'), '{"name": "extra-two", "dependencies": {"react": "18.3.1"}}');
+  fs.copyFileSync(path.join(REPO, 'fixtures', 'backoffice', 'src', 'api.ts'), path.join(extra2, 'src', 'api.ts'));
 
   const server = spawn(PY, [path.join(REPO, 'atlas', 'atlas.py'), '--config', cfg, 'open', '--no-browser'], {env:{...process.env, PYTHONUNBUFFERED:'1'}}); kids.push(server);
   let url = ''; server.stdout.on('data', d => { const m = /(http:\/\/127\.0\.0\.1:\d+\/)/.exec(String(d)); if (m) url = m[1]; });
@@ -57,6 +60,10 @@ setTimeout(() => { console.log(out.join('\n')); console.log('시간 초과'); do
   const snap = async name => { await sleep(350); const r = await send('Page.captureScreenshot', {format:'png'}); fs.writeFileSync(path.join(shots, name + '.png'), Buffer.from(r.result.data, 'base64')); };
   const ready = async (cond='true', ms=30000) => { for (let t = 0; t < ms; t += 250){ await sleep(250); try { if (await ev(`!!window.__T && __T.SYSL !== undefined && !document.querySelector('#boot') && (${cond})`)) return true; } catch (e){} } return false; };
   const S = 'const T = __T, sx = wx => (wx - T.cam.x)*T.cam.z + innerWidth/2, sy = wy => (wy - T.cam.y)*T.cam.z + innerHeight/2;';
+  const spots = () => ev(`Object.fromEntries(__T.SYSL.filter(s => !s.base).map(s => [s.id, [s.x, s.y]]))`);       // 시스템 자리
+  const same = (before, after) => Object.keys(before).filter(id => !after[id] || after[id][0] !== before[id][0] || after[id][1] !== before[id][1]);
+  const apart = () => ev(`(() => { const L = __T.SYSL.filter(s => !s.base), bad = []; for (let i = 0; i < L.length; i++) for (let j = i+1; j < L.length; j++){ const a = L[i], b = L[j]; if (a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y) bad.push(a.id + '×' + b.id); } return bad; })()`);
+  const readNotes = () => { try { return JSON.parse(fs.readFileSync(path.join(ws, 'atlas-notes.json'), 'utf8')); } catch (e){ return {}; } };
   await send('Runtime.enable'); await send('Page.enable');
 
   // 1) 열기
@@ -64,11 +71,14 @@ setTimeout(() => { console.log(out.join('\n')); console.log('시간 초과'); do
   ok('로컬 서버로 열면 설정 기능이 켜진다', await ev('__T.API.ok'));
   const pb = await text('#pendbox');
   ok('확인이 필요한 호출과 지도에 없는 주소를 알린다', pb.includes('확인이 필요한 호출 1') && pb.includes('지도에 없는 주소'), pb);
+  ok('설정 단추는 톱니바퀴이고 L1~L4 와 떨어져 있다', await ev(`(() => { const b = document.querySelector('#level .lvnav'), prev = b.previousElementSibling; return !!b.querySelector('svg') && b.innerText.trim() === '설정' && b.getBoundingClientRect().left - prev.getBoundingClientRect().right >= 6; })()`));
+  await sleep(700);
+  ok('처음 놓인 자리를 기억해 둔다', Object.keys(readNotes().positions || {}).length === await ev(`__T.SYSL.filter(s => !s.base).length`), JSON.stringify(readNotes()));
   await snap('1-overview');
 
   // 2) 시스템 목록에서 눌러 이동
   await tap('#level .lvnav');
-  ok('시스템 목록이 열린다', (await text('#trace h2')).startsWith('시스템 ') && await ev(`document.querySelectorAll('#navlist .srow').length`) >= 7, await text('#trace h2'));
+  ok('설정 메뉴가 열리고 시스템 목록이 있다', (await text('#trace')).includes('시스템으로 이동') && (await text('#trace .eyebrow')).trim() === '설정' && await ev(`document.querySelectorAll('#navlist .srow').length`) >= 7, (await text('#trace')).slice(0, 120));
   const z0 = await ev('__T.cam.z');
   await tap('#navlist [data-sys="booking-server"]'); await sleep(1500);
   ok('목록에서 누르면 그 시스템으로 간다', await ev(`(() => { const T = __T, s = T.SYS['booking-server']; return T.cam.z > ${z0}*1.3 && T.cam.x > s.x && T.cam.x < s.x + s.w && T.cam.y > s.y && T.cam.y < s.y + s.h; })()`), await ev('JSON.stringify(__T.cam)'));
@@ -85,8 +95,8 @@ setTimeout(() => { console.log(out.join('\n')); console.log('시간 초과'); do
   ok('배치 편집이 켜진다', await ev('__T.state.arrange') && (await text('#walk')).includes('배치 편집'), await text('#walk'));
   await tap('#level [data-lv="0"]'); await sleep(1300);
   p = await ev(`(() => { ${S} const s = T.SYS.web; return [sx(s.x + s.w/2), sy(s.y + s.h/2), s.x, s.y, T.cam.x, T.UNITS.find(u => u.sys === 'web').x]; })()`);
-  await drag(p[0], p[1], p[0] - 90, p[1] + 150);
-  const moved = await ev(`(() => { const T = __T, s = T.SYS.web, u = T.UNITS.find(u => u.sys === 'web'); return [s.x, s.y, s.moved, T.cam.x, u.x, u.x > s.x && u.x < s.x + s.w]; })()`);
+  await drag(p[0], p[1], p[0] - 260, p[1] - 40);      // 왼쪽 빈 곳으로
+  const moved = await ev(`(() => { const T = __T, s = T.SYS.web, u = T.UNITS.find(u => u.sys === 'web'); return [s.x, s.y, true, T.cam.x, u.x, u.x > s.x && u.x < s.x + s.w]; })()`);
   ok('배치 편집 중에는 끌면 시스템이 움직인다', moved[2] === true && (moved[0] !== p[2] || moved[1] !== p[3]) && moved[3] === p[4], JSON.stringify([p, moved]));
   ok('안에 든 유닛도 함께 움직인다', moved[4] !== p[5] && moved[5] === true);
   await snap('3-arrange');
@@ -94,7 +104,7 @@ setTimeout(() => { console.log(out.join('\n')); console.log('시간 초과'); do
   const notes = JSON.parse(fs.readFileSync(path.join(ws, 'atlas-notes.json'), 'utf8'));
   ok('옮긴 자리가 작업 공간에 저장된다', !!notes.positions && notes.positions.web && notes.positions.web[0] === moved[0] && notes.positions.web[1] === moved[1], JSON.stringify(notes));
   await send('Page.reload'); await ready('__T.UNITS.length > 20');
-  ok('다시 열어도 옮긴 자리에 있다', await ev(`__T.SYS.web.x === ${moved[0]} && __T.SYS.web.y === ${moved[1]} && __T.SYS.web.moved === true`));
+  ok('다시 열어도 옮긴 자리에 있다', await ev(`__T.SYS.web.x === ${moved[0]} && __T.SYS.web.y === ${moved[1]}`));
 
   // 5) 확인이 필요한 호출
   await tap('#pendbox [data-act="pending"]'); await sleep(900);
@@ -117,40 +127,55 @@ setTimeout(() => { console.log(out.join('\n')); console.log('시간 초과'); do
   await tap('#cfg [data-c="link"][data-to="booking-server"]'); await sleep(500);
   ok('부르는 서버를 정하면 목록에 남는다', (await text('#cfg')).includes('애매하면 이 서버로 본다'));
   await snap('5-settings');
+  const before6 = await spots();
   await tap('#cfg-status [data-c="sync"]');
   ok('다시 분석이 끝나면 지도가 새로 열린다', await ready(`__T.META.systems.some(s => s.ext)`, 40000), await text('#cfg').catch(() => ''));
   ok('레거시가 지도에 시스템으로 나온다', await ev(`(() => { const s = __T.SYS.erp; return !!s && s.ext === true && s.w > 0 && isFinite(s.x) && s.units.length === 1 && s.units[0].m.length === 4; })()`));
   ok('두 시스템이 같은 레거시로 이어진다', await ev(`(() => { const T = __T, from = new Set(T.EDGES.filter(e => e.g === 'http' && T.UNITS[e.t].sys === 'erp').map(e => T.UNITS[e.s].sys)); return from.has('booking-server') && from.has('booking-web'); })()`));
   ok('확인이 필요한 호출이 없어지고 관리자 화면이 예약 서버로 이어진다', await ev(`!document.querySelector('#pendbox').innerText.includes('확인이 필요한 호출') && __T.EDGES.some(e => e.g === 'http' && __T.UNITS[e.s].sys === 'backoffice' && __T.UNITS[e.t].sys === 'booking-server')`), await text('#pendbox'));
-  ok('옮겨 둔 자리는 분석 뒤에도 그대로', await ev(`__T.SYS.web.x === ${moved[0]} && __T.SYS.web.moved === true`));
+  ok('레거시가 새로 생겨도 기존 시스템 자리는 그대로', same(before6, await spots()).length === 0 && (await spots()).web[0] === moved[0], same(before6, await spots()).join(', '));
+  ok('새로 놓인 레거시는 다른 시스템과 겹치지 않는다', (await apart()).length === 0, (await apart()).join(', '));
   await send('Input.dispatchKeyEvent', {type:'keyDown', key:'Escape', code:'Escape', windowsVirtualKeyCode:27}); await send('Input.dispatchKeyEvent', {type:'keyUp', key:'Escape', code:'Escape', windowsVirtualKeyCode:27});
   await tap('#level [data-lv="0"]'); await sleep(1400);
   await snap('6-legacy');
 
-  // 7) 설정 패널: 폴더 추가
+  // 7) 설정 패널: 폴더를 이어서 추가 (첫 번째는 분석을 미루고, 두 번째에서 한 번에 분석)
+  const before7 = await spots();
   await tap('#level .lvnav'); await tap('#trace [data-act="cfg"]'); await sleep(500);
+  await tap('#cfg [data-c="remove"][data-v="backoffice"]'); await sleep(400);
+  ok('빼기는 한 번 더 눌러야 실행된다', (await text('#cfg')).includes('한 번 더 누르면 뺍니다') && await ev('__T.API.st.sources.length') === 3);
   await tap('#cfg [data-c="open-add"]'); await sleep(500);
   await ev(`document.querySelector('#add-path').value = ${JSON.stringify(path.dirname(extra))}`);
   await tap('#cfg [data-c="ls-go"]'); await sleep(500);
-  ok('폴더 목록이 나온다', (await text('#cfg .dirs')).includes('extra-web'), await text('#cfg .dirs'));
+  ok('폴더 목록이 나온다', (await text('#cfg .dirs')).includes('extra-web') && (await text('#cfg .dirs')).includes('extra-two'), await text('#cfg .dirs'));
   await tap('#cfg .dirs [data-v="extra-web"]'); await sleep(500);
   await tap('#cfg [data-c="preview"]'); await sleep(600);
   ok('미리보기가 시스템을 알아본다', (await text('#cfg')).includes('extra-web') && (await text('#cfg')).includes('추가하고 분석'), (await text('#cfg')).slice(0, 300));
+  await tap('#cfg [data-c="add-more"]'); await sleep(700);
+  const c7 = await text('#cfg');
+  ok('추가만 하면 폴더 고르는 화면에 남고 넣은 폴더가 표시된다', c7.includes('extra-web 을(를) 추가했습니다') && (await text('#cfg .dirs')).includes('추가됨') && c7.includes('다시 분석'), c7.slice(0, 300));
+  await tap('#cfg .dirs [data-v="extra-two"]'); await sleep(500);
+  await tap('#cfg [data-c="preview"]'); await sleep(600);
   await tap('#cfg [data-c="add"]');
-  ok('추가하면 분석까지 하고 새 시스템이 지도에 나온다', await ready(`!!__T.SYS['extra-web'] && __T.SYS['extra-web'].w > 0`, 40000), await text('#cfg').catch(() => ''));
-  ok('새 시스템은 옮겨 둔 시스템과 겹치지 않는다', await ev(`(() => { const T = __T, a = T.SYS['extra-web'], b = T.SYS.web; return !(a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y); })()`));
+  ok('추가하고 분석하면 넣어 둔 폴더까지 함께 지도에 나온다', await ready(`!!__T.SYS['extra-web'] && __T.SYS['extra-web'].w > 0 && !!__T.SYS['extra-two'] && __T.SYS['extra-two'].w > 0`, 40000), await text('#cfg').catch(() => ''));
+  ok('폴더를 추가해도 기존 시스템 자리는 그대로', same(before7, await spots()).length === 0, same(before7, await spots()).join(', '));
+  ok('새 시스템은 다른 시스템과 겹치지 않는다', (await apart()).length === 0, (await apart()).join(', '));
   ok('경로가 같은 호출은 틀린 서버에 붙이지 않는다', await ev(`!__T.EDGES.some(e => e.g === 'http' && __T.UNITS[e.s].sys === 'extra-web' && __T.UNITS[e.t].sys === 'order-service')`));
+  await tap('#level [data-lv="0"]'); await sleep(1400);
+  await snap('6b-after-add');
 
   // 8) 자동 정렬로 되돌리기
   await tap('#level .lvnav'); await sleep(300);
-  await tap('#trace [data-act="arrange-reset"]'); await sleep(1200);
-  ok('자동 정렬로 되돌리면 저장한 자리도 지워진다', await ev(`!__T.SYS.web.moved && !__T.POS`) && !JSON.parse(fs.readFileSync(path.join(ws, 'atlas-notes.json'), 'utf8')).positions);
+  await tap('#trace [data-act="arrange-reset"]'); await sleep(400);
+  ok('자동 정렬은 한 번 더 눌러야 실행된다', (await text('#trace')).includes('한 번 더 누르면') && (await spots()).web[0] === moved[0]);
+  await tap('#trace [data-act="arrange-reset"]'); await sleep(1300);
+  ok('자동 정렬을 하면 전체를 다시 놓고 그 자리를 기억한다', await ev(`__T.SYSL.filter(s => !s.base).every(s => s.x === s.ax && s.y === s.ay)`) && (readNotes().positions || {}).web[0] === await ev('Math.round(__T.SYS.web.ax)') && (await apart()).length === 0);
 
   // 9) 휴대폰 폭
   await send('Emulation.setDeviceMetricsOverride', {width:390, height:844, deviceScaleFactor:2, mobile:true});
   await send('Page.reload'); await ready('__T.UNITS.length > 20');
   await tap('#level .lvnav'); await sleep(400);
-  ok('휴대폰 폭에서도 시스템 목록이 열린다', (await text('#trace h2')).startsWith('시스템 ') && await ev(`document.querySelector('#insp').hidden`));
+  ok('휴대폰 폭에서도 설정 메뉴가 열린다', (await text('#trace')).includes('시스템으로 이동') && await ev(`document.querySelector('#insp').hidden`));
   await snap('7-phone-list');
   await tap('#trace [data-act="cfg"]'); await sleep(500);
   ok('휴대폰 폭에서 설정 패널이 화면 안에 들어온다', await ev(`(() => { const r = document.querySelector('#cfgbox').getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth + 1; })()`));

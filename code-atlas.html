@@ -174,7 +174,10 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--holo);outline-o
 .rtbox .mini-act{display:inline-block;margin:4px 6px 0 0}
 .pendbox b{color:#FFB454}
 /* 시스템 목록 · 배치 편집 */
-.level .lvnav b{color:var(--holo)}
+.level .lvnav{flex:0 0 auto;flex-direction:row;align-items:center;gap:7px;padding:0 13px;margin-left:8px;border-left:1px solid var(--line);background:rgba(90,215,255,.07)}
+.level .lvnav svg{width:16px;height:16px;flex:none;fill:none;stroke:var(--holo);stroke-width:1.7;stroke-linejoin:round}
+.level .lvnav b{color:var(--holo);letter-spacing:.08em}
+.level .lvnav.on{background:linear-gradient(180deg,rgba(90,215,255,.3),rgba(90,215,255,.08))}
 .navq{width:100%;background:transparent;border:1px solid var(--line);color:var(--ink);font:400 12px var(--font-mono);padding:7px 8px;outline:none}
 .navq:focus{border-color:var(--holo)}
 .srow .k{min-width:40px}
@@ -257,7 +260,7 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--holo);outline-o
     <button data-lv="1"><i>L2</i><b>MODULE</b></button>
     <button data-lv="2"><i>L3</i><b>CLASS</b></button>
     <button data-lv="3"><i>L4</i><b>METHOD</b></button>
-    <button data-act="nav" class="lvnav" aria-label="시스템 목록 열기"><i>GO</i><b>시스템</b></button>
+    <button data-act="nav" class="lvnav" aria-label="설정 열기: 폴더 추가, 배치, 시스템으로 이동"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.3 4.8L10.7 1.9L13.3 1.9L13.7 4.8L15.9 5.7L18.2 3.9L20.1 5.8L18.3 8.1L19.2 10.3L22.1 10.7L22.1 13.3L19.2 13.7L18.3 15.9L20.1 18.2L18.2 20.1L15.9 18.3L13.7 19.2L13.3 22.1L10.7 22.1L10.3 19.2L8.1 18.3L5.8 20.1L3.9 18.2L5.7 15.9L4.8 13.7L1.9 13.3L1.9 10.7L4.8 10.3L5.7 8.1L3.9 5.8L5.8 3.9L8.1 5.7Z"/><circle cx="12" cy="12" r="3.1"/></svg><b>설정</b></button>
   </nav>
 
   <aside class="trace side panel" id="trace" hidden></aside>
@@ -335,7 +338,7 @@ let META, UNITS = [], EDGES = [], SYS = {}, SYSL = [], MODS = [], MODE = [], SYS
 let WORLD = {x0:0,y0:0,x1:1,y1:1};
 const byId = new Map();
 const show = {use:true, http:true, db:true, svc:true, mirror:true, msg:true, rt:true};
-const state = {sel:null, trace:null, hits:null, impact:null, hover:null, edge:null, hoverEdge:null, walk:null, min:false, nav:false, arrange:false};
+const state = {sel:null, trace:null, hits:null, impact:null, hover:null, edge:null, hoverEdge:null, walk:null, min:false, nav:false, arrange:false, resetArm:false};
 let focus = null, dirty = true, anim = null, inertia = null, zoomTarget = null, drawMs = 0, vis = [];
 const AI = {fn:null, state:'wait', ctl:null, timer:null, notes:{}, hist:[], noteBusy:null, noteErr:null, index:null};
 const bySlug = new Map(); let selfHash = null;
@@ -429,15 +432,21 @@ function layout(){
   if (COLS){ const placed = new Set(COLS.flat()), rest = baseIds.filter(id => !placed.has(id)); if (rest.length) COLS.push(rest); }
   else COLS = [...new Set(baseIds.map(id => rank[id]))].sort((a,b) => a-b).map(r => baseIds.filter(id => rank[id] === r));
   const GAPX = 1300, GAPY = 800, GAPC = 3200, tag = k => k ? '@' + k : '';
+  const sized = COLS.flat().map(id => SYS[id]).filter(s => s && s.w);
+  const HT = WSCOLS ? Infinity : Math.max(Math.sqrt(sized.reduce((a,s) => a + (s.w+GAPX)*(s.h+GAPY), 0)/1.7), ...sized.map(s => s.h));   // 전체가 가로로 조금 긴 꼴이 되게 하는 열 높이
   const placeCluster = (k, ox, oy) => {
     let x = 0, hmax = 0;
     for (const col of COLS){
       const ss = col.map(id => SYS[id + tag(k)]).filter(s => s && s.w);
       if (!ss.length) continue;
-      const cw = Math.max(...ss.map(s => s.w)), chh = ss.reduce((a,s) => a+s.h+GAPY, -GAPY);
-      let y = -chh/2; hmax = Math.max(hmax, chh);
-      for (const s of ss){ s.x = ox + x + (cw - s.w)/2; s.y = oy + y; y += s.h + GAPY; }
-      x += cw + GAPX;
+      const subs = [[]]; let cur = 0;
+      for (const s of ss){ if (cur > 0 && cur + s.h > HT){ subs.push([]); cur = 0; } subs[subs.length-1].push(s); cur += s.h + GAPY; }
+      for (const sub of subs){
+        const cw = Math.max(...sub.map(s => s.w)), chh = sub.reduce((a,s) => a+s.h+GAPY, -GAPY);
+        let y = -chh/2; hmax = Math.max(hmax, chh);
+        for (const s of sub){ s.x = ox + x + (cw - s.w)/2; s.y = oy + y; y += s.h + GAPY; }
+        x += cw + GAPX;
+      }
     }
     return {w:x - GAPX, h:hmax};
   };
@@ -448,16 +457,18 @@ function layout(){
   for (const s of SYSL){ s.ax = s.x; s.ay = s.y; }       // 자동 배치 자리. '자동 정렬'로 돌아갈 때 쓴다
   applyPositions(); placeAbs();
 }
-/* 사람이 옮겨 둔 시스템 자리를 자동 배치 위에 덮는다. 자리가 정해지지 않은 시스템(새로 추가된 것)이 옮겨 둔 시스템과 겹치면
-   겹치지 않을 때까지 아래로 내린다. 옮겨 둔 자리는 건드리지 않는다. */
+/* 한 번 놓인 시스템은 자리를 기억한다(POS). 폴더를 더 추가해 자동 배치가 달라져도 이미 있던 시스템은 그 자리에 두고,
+   자리가 없는 새 시스템만 자동 배치 자리에 놓되 겹치면 겹치지 않을 때까지 아래로 내린다.
+   기억해 둔 자리는 어떤 경우에도 스스로 옮기지 않는다(사람이 붙여 놓았거나 상자가 커져 겹치더라도). 새로 놓은 것이 있으면 needPin 이 켜지고 load 가 저장한다. */
+let needPin = false;
 function applyPositions(){
-  for (const s of SYSL){ s.x = s.ax; s.y = s.ay; s.moved = false; }
-  if (SCALE !== 1 || !POS) return;
-  const fixed = [];
-  for (const s of SYSL){ const p = POS[s.id]; if (Array.isArray(p) && isFinite(p[0]) && isFinite(p[1])){ s.x = +p[0]; s.y = +p[1]; s.moved = true; fixed.push(s); } }
-  if (!fixed.length) return;
-  const hit = (a, b) => a.x < b.x+b.w+400 && a.x+a.w+400 > b.x && a.y < b.y+b.h+300 && a.y+a.h+300 > b.y;
-  for (const s of SYSL){ if (s.moved) continue; for (let n = 0; n < 60; n++){ const o = fixed.find(t => hit(s, t)); if (!o) break; s.y = o.y + o.h + 800; } fixed.push(s); }
+  for (const s of SYSL){ s.x = s.ax; s.y = s.ay; s.pin = false; }
+  needPin = false;
+  if (SCALE !== 1) return;
+  const base = SYSL.filter(s => !s.base), placed = [];
+  const hit = (a, b) => a.x < b.x+b.w+300 && a.x+a.w+300 > b.x && a.y < b.y+b.h+300 && a.y+a.h+300 > b.y;
+  for (const s of base){ const p = POS && POS[s.id]; if (Array.isArray(p) && isFinite(p[0]) && isFinite(p[1])){ s.x = +p[0]; s.y = +p[1]; s.pin = true; placed.push(s); } }
+  for (const s of base) if (!s.pin){ for (let n = 0; n < 80; n++){ const o = placed.find(t => hit(s, t)); if (!o) break; s.y = o.y + o.h + 800; } placed.push(s); needPin = true; }
 }
 function placeSys(s){ for (const m of s.mods){ m.x = s.x + m.rx; m.y = s.y + m.ry; for (const u of m.units){ u.x = m.x + u.rx; u.y = m.y + u.ry; } } }
 function placeAbs(){
@@ -785,8 +796,10 @@ function draw(now){
   else if (state.impact) drawImpactMark();
   if (aTrunk > 0.3 && !focus){
     ctx.font = `500 10px ${FM}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const dense = SYSE.length > 18;      // 시스템 사이 선이 많으면 이름표가 지도를 덮는다: 가리킨 선에만 붙인다
     for (const e of SYSE){
       if (!show[e.g] || e.g === 'use' && e.w < 6 || Math.min(e.a.w, e.b.w)*z < 70) continue;
+      if (dense && !(state.hoverEdge && state.hoverEdge.e === e)) continue;
       const p = bez(e.geo, e.lt), x = SX(p[0]), y = SY(p[1]), label = `${EK[e.g].ko} ${e.w}`, tw = ctx.measureText(label).width + 12;
       ctx.globalAlpha = aTrunk; ctx.fillStyle = 'rgba(2,10,18,.9)'; ctx.fillRect(x-tw/2, y-8, tw, 16);
       ctx.strokeStyle = rgba(EK[e.g].c, 0.7); ctx.lineWidth = 1; ctx.strokeRect(Math.round(x-tw/2)+.5, Math.round(y-8)+.5, tw, 16);
@@ -1350,18 +1363,19 @@ function renderTrace(){
   } else if (state.nav){ renderNav(el); el.hidden = false; }
   else { el.hidden = true; el.innerHTML = ''; }
 }
-/* 시스템 목록: 눌러서 그 시스템으로 이동한다. 시스템이 많을 때 지도를 헤매지 않게 하는 입구이고, 배치 편집과 설정도 여기서 연다. */
+/* 설정 메뉴(오른쪽 위 톱니바퀴): 프로젝트 설정으로 들어가는 입구, 배치 편집, 시스템으로 바로 가기를 한곳에 둔다. */
 function renderNav(el){
   const list = SYSL.filter(s => !s.base).slice().sort((a,b) => a.x - b.x || a.y - b.y), pend = pendingCount();
   const kind = s => s.ext ? '레거시' : s.id === 'device' || s.id === 'cloud' ? '외부' : '시스템';
-  el.innerHTML = `<div class="side-head"><div><span class="eyebrow">바로 가기</span><h2>시스템 ${list.length}개</h2></div><button class="x" data-act="nav" aria-label="시스템 목록 닫기">닫기</button></div>
+  el.innerHTML = `<div class="side-head"><div><span class="eyebrow">설정</span><h2>${esc(String(META.repo || '코드 아틀라스'))}</h2></div><button class="x" data-act="nav" aria-label="설정 닫기">닫기</button></div>
   <div class="side-body">
-    ${list.length > 8 ? `<input class="navq" id="navq" type="text" autocomplete="off" spellcheck="false" placeholder="이름으로 거르기" aria-label="시스템 이름으로 거르기">` : ''}
-    <section><div class="xlink" id="navlist">${list.map(s => `<button class="xrow srow" data-sys="${esc(s.id)}" data-name="${esc((s.name + ' ' + s.id).toLowerCase())}" style="--c:${s.color}"><span class="k">${kind(s)}</span><span class="n">${esc(s.name)}<span class="r">${esc(s.sub || '')}${s.sub ? ' · ' : ''}유닛 ${s.units.length}</span></span></button>`).join('')}</div></section>
-    ${pend ? `<section><h3>확인이 필요한 호출 <em>${pend}</em></h3><p class="note">경로가 여러 서버에 맞아 선을 긋지 않은 호출입니다.</p><div class="acts"><button class="act" data-act="pending">목록 보기</button></div></section>` : ''}
-    <section><h3>배치</h3><p class="note">시스템 상자를 끌어 자리를 옮길 수 있습니다. 옮긴 자리는 저장되고, 새로 추가된 시스템은 빈자리에 놓입니다.</p>
-      <div class="acts"><button class="act${state.arrange ? ' on' : ''}" data-act="arrange">${state.arrange ? '배치 편집 끝내기' : '시스템 자리 옮기기'}</button>${SYSL.some(s => s.moved) ? `<button class="act" data-act="arrange-reset">자동 정렬로 되돌리기</button>` : ''}</div></section>
-    ${API.ok ? `<section><h3>설정</h3><div class="acts"><button class="act" data-act="cfg">폴더·레거시·다시 분석</button></div></section>` : ''}
+    ${API.ok ? `<section><h3>프로젝트</h3><div class="acts"><button class="act" data-act="cfg">폴더 추가 · 레거시 · 다시 분석</button></div></section>` : ''}
+    ${pend ? `<section><h3 style="color:#FFB454">확인이 필요한 호출 <em>${pend}</em></h3><p class="note">경로가 여러 서버에 맞아 선을 긋지 않은 호출입니다.</p><div class="acts"><button class="act" data-act="pending">목록 보기</button></div></section>` : ''}
+    <section><h3>배치</h3><p class="note">시스템 상자를 끌어 자리를 옮길 수 있습니다. 한 번 놓인 자리는 기억해 두고, 나중에 추가된 시스템만 빈자리에 놓습니다.</p>
+      <div class="acts"><button class="act${state.arrange ? ' on' : ''}" data-act="arrange">${state.arrange ? '배치 편집 끝내기' : '시스템 자리 옮기기'}</button><button class="act${state.resetArm ? ' on' : ''}" data-act="arrange-reset">${resetLabel()}</button></div></section>
+    <section><h3>시스템으로 이동 <em>${list.length}</em></h3>
+      ${list.length > 8 ? `<input class="navq" id="navq" type="text" autocomplete="off" spellcheck="false" placeholder="이름으로 거르기" aria-label="시스템 이름으로 거르기" style="margin-bottom:8px">` : ''}
+      <div class="xlink" id="navlist">${list.map(s => `<button class="xrow srow" data-sys="${esc(s.id)}" data-name="${esc((s.name + ' ' + s.id).toLowerCase())}" style="--c:${s.color}"><span class="k">${kind(s)}</span><span class="n">${esc(s.name)}<span class="r">${esc(s.sub || '')}${s.sub ? ' · ' : ''}유닛 ${s.units.length}</span></span></button>`).join('')}</div></section>
   </div>`;
 }
 const pendingCount = () => SCALE === 1 ? UNITS.reduce((a,u) => a + (u.pend ? u.pend.length : 0), 0) : 0;
@@ -1384,19 +1398,24 @@ function showPending(){
 /* 배치 편집: 켜 두는 동안에만 시스템 상자가 끌린다. 평소에는 끌어도 지도가 움직일 뿐이라 실수로 배치를 바꾸지 않는다. */
 const posKey = 'atlas-pos-v1:' + location.pathname;
 function flash(msg){ const el = $('#walk'); el.innerHTML = `<span class="wk">${esc(msg)}</span>`; el.hidden = false; clearTimeout(flash.t); flash.t = setTimeout(renderWalk, 4200); }
-async function savePositions(){
-  const p = {}; for (const s of SYSL) if (!s.base && s.moved) p[s.id] = [Math.round(s.x), Math.round(s.y)];
-  POS = Object.keys(p).length ? p : null;
+async function savePositions(quiet){
+  if (SCALE !== 1) return;
+  const p = {}; for (const s of SYSL) if (!s.base){ p[s.id] = [Math.round(s.x), Math.round(s.y)]; s.pin = true; }
+  POS = p; needPin = false;
   const shared = API.ok && await apiPost('layout', {positions:p});
   if (!shared) saveLocal(posKey, POS);
-  flash(shared ? '배치를 작업 공간에 저장했습니다. 같이 쓰는 사람에게도 같은 배치로 보입니다.' : '배치를 이 브라우저에 저장했습니다.');
+  if (!quiet) flash(shared ? '배치를 작업 공간에 저장했습니다. 같이 쓰는 사람에게도 같은 배치로 보입니다.' : '배치를 이 브라우저에 저장했습니다.');
 }
 function setArrange(on){
   if (on === state.arrange) return;
   if (on){ clearAll(); state.arrange = true; } else { state.arrange = false; placeAbs(); resize(); savePositions(); }
   cv.classList.toggle('arr', state.arrange); renderTrace(); renderWalk(); invalidate();
 }
-function resetArrange(){ for (const s of SYSL) s.moved = false; POS = null; relayout(); savePositions(); renderTrace(); fitAll(); }
+function resetArrange(){        // 실수로 누르면 옮겨 둔 자리가 다 사라지므로 한 번 더 눌러야 실행한다
+  if (!state.resetArm){ state.resetArm = true; clearTimeout(resetArrange.t); resetArrange.t = setTimeout(() => { state.resetArm = false; renderTrace(); renderWalk(); }, 4500); renderTrace(); renderWalk(); return; }
+  state.resetArm = false; clearTimeout(resetArrange.t); POS = null; relayout(); savePositions(); renderTrace(); renderWalk(); fitAll();
+}
+const resetLabel = () => state.resetArm ? '한 번 더 누르면 전체를 다시 정렬합니다' : '자동 정렬';
 async function apiPost(name, body){
   try { const r = await fetch('api/' + name, {method:'POST', headers:{'Content-Type':'application/json', 'X-Atlas-Token':API.token}, body:JSON.stringify(body || {})}); return r.ok ? await r.json() : null; } catch (e){ return null; }
 }
@@ -1494,7 +1513,7 @@ function walkCands(u){
 function renderWalk(){
   const el = $('#walk');
   if (!UNITS.length){ el.innerHTML = `<span class="wk">아직 분석한 시스템이 없습니다.${API.ok ? '' : ' atlas.py add 로 폴더를 추가한 뒤 sync 하세요.'}</span>` + (API.ok ? `<button class="mini-act go" data-act="cfg">폴더 추가</button>` : ''); el.hidden = false; return; }
-  if (state.arrange){ el.innerHTML = `<span class="wk"><b>배치 편집</b> · 시스템 상자를 끌어 옮기세요</span><button class="mini-act go" data-act="arrange">완료</button><button class="mini-act" data-act="arrange-reset">자동 정렬</button>`; el.hidden = false; return; }
+  if (state.arrange){ el.innerHTML = `<span class="wk"><b>배치 편집</b> · 시스템 상자를 끌어 옮기세요</span><button class="mini-act go" data-act="arrange">완료</button><button class="mini-act" data-act="arrange-reset">${resetLabel()}</button>`; el.hidden = false; return; }
   if (!walkActive() || !state.walk){ el.hidden = true; return; }
   const w = state.walk, u = UNITS[state.sel.u], e = w.cands[w.i];
   el.innerHTML = `<button class="mini-act" data-act="walk-back"${NAV.hist.length ? '' : ' disabled'}>← 되돌아가기</button>`
@@ -1552,7 +1571,8 @@ function edgePanel(e){
 /* ───────────── 설정 패널 ─────────────
    atlas.py open 으로 띄운 로컬 서버에서만 켜진다(정적 파일로 올린 화면이나 아티팩트에서는 단추가 보이지 않는다).
    터미널 명령으로 하던 일(폴더 추가, 다시 분석, 로그 넣기)과 한 지도에 여러 제품을 둘 때 필요한 설정(서버 주소, 레거시, 부르는 서버)을 여기서 한다. */
-const CFG = {view:'main', ls:null, pre:null, err:'', msg:'', dirty:false, ext:null, timer:null};
+const CFG = {view:'main', ls:null, pre:null, err:'', msg:'', dirty:false, ext:null, timer:null, confirm:null};
+const lastDir = v => { try { if (v) sessionStorage.setItem('atlas-ls', v); return sessionStorage.getItem('atlas-ls') || ''; } catch (e){ return ''; } };
 async function initApi(){
   try { const r = await fetch('api/state', {cache:'no-store'}); if (!r || !r.ok) return; const d = await r.json(); if (d && d.token){ API.ok = true; API.token = d.token; API.st = d; } } catch (e){}
 }
@@ -1571,8 +1591,8 @@ function jobStatus(){
   const j = API.st.job, what = j.kind === 'ingest' ? '접속 로그 읽기' : '분석';
   if (j.running) return `<div class="aibar"><span class="pulse"></span><span>${what} 중입니다</span></div><pre class="log">${esc(j.log.slice(-8).join('\n'))}</pre>`;
   if (j.rc) return `<div class="aibar err"><span>${what}에 실패했습니다.</span></div><pre class="log">${esc(j.log.slice(-14).join('\n'))}</pre>`;
-  if (CFG.msg) return `<div class="aibar"><span>${esc(CFG.msg)}</span></div>`;
-  return CFG.dirty ? `<div class="aibar"><span>설정이 바뀌었습니다. 다시 분석해야 지도에 반영됩니다.</span><button class="mini-act" data-c="sync">다시 분석</button></div>` : '';
+  return (CFG.msg ? `<div class="aibar"><span>${esc(CFG.msg)}</span></div>` : '')
+    + (CFG.dirty ? `<div class="aibar"><span>설정이 바뀌었습니다. 다시 분석해야 지도에 반영됩니다.</span><button class="mini-act" data-c="sync">다시 분석</button></div>` : '');
 }
 function renderConfig(){
   const st = API.st, el = $('#cfgbox'), M = META || {};
@@ -1585,20 +1605,23 @@ function renderConfig(){
     el.innerHTML = head + `<div class="side-body">${top}
       <section><h3>폴더 추가 <em>폴더는 읽기만 합니다</em></h3>
         <div class="cform"><input type="text" id="add-path" value="${esc(ls ? ls.path : st.home)}" spellcheck="false" aria-label="폴더 경로"><button class="mini-act" data-c="ls-go">이동</button></div>
-        <div class="dirs">${ls && ls.parent ? `<button data-c="ls" data-v="..">← 상위 폴더</button>` : ''}${ls ? ls.dirs.map(d => `<button data-c="ls" data-v="${esc(d)}">${esc(d)}</button>`).join('') || '<p class="note" style="padding:8px">하위 폴더가 없습니다.</p>' : ''}</div>
-        <div class="acts"><button class="act" data-c="preview">이 폴더 미리보기</button><button class="act" data-c="back">취소</button></div></section>
-      ${pre ? `<section><h3>미리보기 <em>${esc(pre.path)}</em></h3>${pre.systems.length ? pre.systems.map(y => `<div class="crow"><span class="nm">${esc(y.name)}<small>${esc(y.sub)} · 루트 ${y.roots.map(esc).join(', ')}${y.note ? ' · ' + esc(y.note) : ''}</small></span></div>`).join('') + `<div class="acts" style="margin-top:10px"><button class="act on" data-c="add">추가하고 분석</button></div>`
+        <div class="dirs">${ls && ls.parent ? `<button data-c="ls" data-v="..">← 상위 폴더</button>` : ''}${ls ? ls.dirs.map(d => `<button data-c="ls" data-v="${esc(d)}">${esc(d)}${(ls.added || []).includes(d) ? ' <small style="color:var(--svc)">· 추가됨</small>' : ''}</button>`).join('') || '<p class="note" style="padding:8px">하위 폴더가 없습니다.</p>' : ''}</div>
+        ${ls && ls.here ? `<p class="note">이 폴더는 이미 추가되어 있습니다 (${esc(ls.here)}).</p>` : ''}
+        <div class="acts"><button class="act" data-c="preview">이 폴더 미리보기</button><button class="act" data-c="back">돌아가기</button></div></section>
+      ${pre ? `<section><h3>미리보기 <em>${esc(pre.path)}</em></h3>${pre.systems.length ? pre.systems.map(y => `<div class="crow"><span class="nm">${esc(y.name)}<small>${esc(y.sub)} · 루트 ${y.roots.map(esc).join(', ')}${y.note ? ' · ' + esc(y.note) : ''}</small></span></div>`).join('') + `<div class="acts" style="margin-top:10px"><button class="act on" data-c="add">추가하고 분석</button><button class="act" data-c="add-more">추가만 (폴더를 더 넣은 뒤 한 번에 분석)</button></div>`
         : '<p class="note">이 폴더에서 알아볼 수 있는 시스템이 없습니다. 저장소의 맨 위 폴더를 골라 보세요.</p>'}</section>` : ''}</div>`;
     return;
   }
-  const src = st.sources.map(x => `<div class="crow"><span class="nm">${esc(x.path || x.git)}<small>${esc(x.name)} · 시스템 ${x.systems.length}${x.systems.length ? ' (' + x.systems.map(sysName).map(esc).join(', ') + ')' : ''}</small></span><button class="mini-act" data-c="remove" data-v="${esc(x.name)}">빼기</button></div>`).join('') || `<p class="note">아직 추가한 폴더가 없습니다.</p>`;
-  const sys = st.systems.map(y => `<div class="crow"><span class="nm">${esc(y.name)}<small>${esc(y.sub)} · ${esc(y.id)}${y.skipped ? ' · 문법 패키지가 없어 건너뜀' : ''}</small></span><input type="text" data-host="${esc(y.id)}" value="${esc(y.hosts.join(', '))}" placeholder="서버 주소 (예: api.example.com)" spellcheck="false" aria-label="${esc(y.name)} 서버 주소"><button class="mini-act" data-c="hosts" data-v="${esc(y.id)}">저장</button></div>`).join('');
+  const src = st.sources.map(x => `<div class="crow"><span class="nm">${esc(x.path || x.git)}<small>${esc(x.name)} · 시스템 ${x.systems.length}${x.systems.length ? ' (' + x.systems.map(sysName).map(esc).join(', ') + ')' : ''}</small></span><button class="mini-act" data-c="remove" data-v="${esc(x.name)}"${CFG.confirm === 'src:' + x.name ? ' style="color:#FF5A6A;border-color:#FF3B4E"' : ''}>${CFG.confirm === 'src:' + x.name ? '한 번 더 누르면 뺍니다' : '빼기'}</button></div>`).join('') || `<p class="note">아직 추가한 폴더가 없습니다.</p>`;
+  const serves = new Set(UNITS.filter(u => u.m.some(m => m.route)).map(u => u.sys));      // API 를 내주는 시스템에만 서버 주소 칸을 둔다
+  const sys = st.systems.map(y => `<div class="crow"><span class="nm" style="flex:1 1 120px">${esc(y.id)}<small>${esc(y.sub)}${y.skipped ? ' · 문법 패키지가 없어 건너뜀' : ''}</small></span><input type="text" data-sysname="${esc(y.id)}" value="${esc(y.name)}" placeholder="지도에 보일 이름" aria-label="${esc(y.id)} 이름">${serves.has(y.id) || y.hosts.length ? `<input type="text" data-host="${esc(y.id)}" value="${esc(y.hosts.join(', '))}" placeholder="서버 주소 (예: api.example.com)" spellcheck="false" aria-label="${esc(y.name)} 서버 주소">` : ''}<button class="mini-act" data-c="sys-save" data-v="${esc(y.id)}">저장</button></div>`).join('');
   const seen = (M.hosts_seen || []).filter(h => !h.owner).map(h => h.host).slice(0, 14);
-  const xs = (st.external || []).map(x => `<div class="crow"><span class="nm">${esc(x.name)}<small>${[x.hosts && '주소 ' + x.hosts.join(', '), x.paths && '경로 ' + x.paths.join(', '), x.clients && '클라이언트 ' + x.clients].filter(Boolean).map(esc).join(' · ')}${st.summary.external && st.summary.external[x.id] ? ' · 보내는 호출 ' + st.summary.external[x.id].calls : ''}</small></span><button class="mini-act" data-c="ext-remove" data-v="${esc(x.id)}">빼기</button></div>`).join('');
+  const xs = (st.external || []).map(x => `<div class="crow"><span class="nm">${esc(x.name)}<small>${[x.hosts && '주소 ' + x.hosts.join(', '), x.paths && '경로 ' + x.paths.join(', '), x.clients && '클라이언트 ' + x.clients].filter(Boolean).map(esc).join(' · ')}${st.summary.external && st.summary.external[x.id] ? ' · 보내는 호출 ' + st.summary.external[x.id].calls : ''}</small></span><button class="mini-act" data-c="ext-remove" data-v="${esc(x.id)}"${CFG.confirm === 'ext:' + x.id ? ' style="color:#FF5A6A;border-color:#FF3B4E"' : ''}>${CFG.confirm === 'ext:' + x.id ? '한 번 더 누르면 뺍니다' : '빼기'}</button></div>`).join('');
   const off = (M.offmap || []).map(o => `<div class="crow"><span class="nm">${esc(o.host)}<small>호출 ${o.n} · ${o.systems.map(sysName).map(esc).join(', ')} · ${o.paths.map(esc).join(' ')}</small></span><button class="mini-act" data-c="ext-from" data-v="${esc(o.host)}">레거시로 등록</button></div>`).join('');
   const groups = new Map();
   for (const u of UNITS) for (const p of u.pend || []){ const ids = [...new Set(p.cands.map(c => c[0]))].sort(), k = u.sys + '|' + ids.join(','); let g = groups.get(k); if (!g){ g = {from:u.sys, cands:ids, n:0, ex:p.call}; groups.set(k, g); } g.n++; }
-  const pend = [...groups.values()].map(g => `<div class="crow"><span class="nm">${esc(sysName(g.from))}<small>${g.n}건 · 예: ${esc(g.ex)}</small></span>${g.cands.map(c => `<button class="mini-act" data-c="link" data-from="${esc(g.from)}" data-to="${esc(c)}">${esc(sysName(c))} 로</button>`).join('')}</div>`).join('');
+  const pend = [...groups.values()].map(g => { const got = (st.link.calls[g.from] || []).find(t => g.cands.includes(t));
+    return `<div class="crow"><span class="nm">${esc(sysName(g.from))}<small>${g.n}건 · 예: ${esc(g.ex)}${got ? ` · ${esc(sysName(got))} 로 정함. 다시 분석하면 이어집니다` : ''}</small></span>${got ? '' : g.cands.map(c => `<button class="mini-act" data-c="link" data-from="${esc(g.from)}" data-to="${esc(c)}">${esc(sysName(c))} 로</button>`).join('')}</div>`; }).join('');
   const rules = [...Object.entries(st.link.calls).flatMap(([a,ts]) => ts.map(t => [a, t, '애매하면 이 서버로 본다'])), ...Object.entries(st.link.never).flatMap(([a,ts]) => ts.map(t => [a, t, '잇지 않는다']))]
     .map(([a,t,w]) => `<div class="crow"><span class="nm">${esc(sysName(a))} → ${esc(sysName(t))}<small>${w}</small></span><button class="mini-act" data-c="link-clear" data-from="${esc(a)}" data-to="${esc(t)}">지우기</button></div>`).join('');
   const X = CFG.ext || {};
@@ -1606,7 +1629,7 @@ function renderConfig(){
     <section><h3>소스 폴더 <em>${st.sources.length}</em></h3>${src}<div class="acts" style="margin-top:10px"><button class="act" data-c="open-add">폴더 추가</button><button class="act" data-c="sync">다시 분석</button></div>
       <p class="note" style="margin-top:6px">마지막 분석 ${esc((st.built_at || '없음').replace('T', ' '))} · 유닛 ${(st.summary.units || 0).toLocaleString()} · 연결 ${(st.summary.edges || 0).toLocaleString()}. 같은 서버는 한 번만 넣어야 지도에 하나로 나옵니다.</p></section>
     ${pend || rules ? `<section>${pend ? `<h3 style="color:#FFB454">확인이 필요한 호출 <em>어느 서버를 부르는지 정해 주세요</em></h3>` : `<h3>부르는 서버 지정 <em>${rules ? '정해 둔 것' : ''}</em></h3>`}${pend}${rules}</section>` : ''}
-    ${st.systems.length ? `<section><h3>시스템과 서버 주소 <em>${st.systems.length}</em></h3>${sys}<p class="note" style="margin-top:6px">서버 주소를 적어 두면, 그 주소로 가는 호출은 경로가 다른 서버와 겹쳐도 이 서버에 붙습니다. 쉼표로 여러 개를 적을 수 있습니다.${seen.length ? ' 코드에서 본 주소: ' + seen.map(esc).join(', ') : ''}</p></section>` : ''}
+    ${st.systems.length ? `<section><h3>시스템 이름과 서버 주소 <em>${st.systems.length}</em></h3>${sys}<p class="note" style="margin-top:6px">이름은 지도에 보이는 이름입니다. 서버 주소를 적어 두면, 그 주소로 가는 호출은 경로가 다른 서버와 겹쳐도 이 서버에 붙습니다. 쉼표로 여러 개를 적을 수 있습니다.${seen.length ? ' 코드에서 본 주소: ' + seen.map(esc).join(', ') : ''}</p></section>` : ''}
     <section><h3>레거시 <em>소스 없이 지도에 올리는 시스템</em></h3>${xs}${off ? `<p class="note" style="margin:8px 0 4px">지도에 없는 주소로 가는 호출</p>${off}` : ''}
       <div class="cform" style="margin-top:10px"><input type="text" id="x-name" value="${esc(X.name || '')}" placeholder="이름 (예: 레거시 ERP)"><input type="text" id="x-hosts" value="${esc(X.hosts || '')}" placeholder="주소 (예: erp.example.com)" spellcheck="false">
         <input type="text" id="x-paths" value="${esc(X.paths || '')}" placeholder="경로 꼴 (예: /erp/**)" spellcheck="false"><input type="text" id="x-clients" value="${esc(X.clients || '')}" placeholder="클라이언트 이름 꼴 (예: Erp.*Client)" spellcheck="false"><button class="act" data-c="ext-add">레거시 등록</button></div>
@@ -1630,22 +1653,33 @@ function bindConfig(){
     if (e.target.id === 'cfg'){ closeConfig(); return; }        // 바깥을 누르면 닫는다
     const t = e.target.closest('[data-c]'); if (!t) return;
     const c = t.dataset.c, v = t.dataset.v, val = id => { const x = $('#' + id); return x ? x.value.trim() : ''; };
+    const armed = CFG.confirm; CFG.confirm = null;
     if (c === 'close'){ closeConfig(); return; }
-    if (c === 'open-add'){ CFG.view = 'add'; CFG.pre = null; CFG.ls = await call('ls', {path:CFG.ls ? CFG.ls.path : ''}); }
+    if (c !== 'sync') CFG.msg = '';
+    if (c === 'open-add'){ CFG.view = 'add'; CFG.pre = null; CFG.ls = await call('ls', {path:CFG.ls ? CFG.ls.path : lastDir()}) || await call('ls', {}); }
     else if (c === 'back'){ CFG.view = 'main'; CFG.err = ''; }
     else if (c === 'ls'){ const r = await call('ls', v === '..' ? {path:CFG.ls.parent} : {path:CFG.ls.path, child:v}); if (r){ CFG.ls = r; CFG.pre = null; } }
     else if (c === 'ls-go'){ const r = await call('ls', {path:val('add-path')}); if (r){ CFG.ls = r; CFG.pre = null; } }
     else if (c === 'preview'){ CFG.pre = await call('add', {path:val('add-path'), dry_run:true}); }
-    else if (c === 'add'){ if (CFG.pre && await call('add', {path:CFG.pre.path})){ CFG.view = 'main'; CFG.pre = null; await startJob('sync'); } }
-    else if (c === 'remove'){ if (await call('remove', {source:v})) CFG.dirty = true; }
-    else if (c === 'hosts'){ const inp = [...document.querySelectorAll('#cfg input[data-host]')].find(x => x.dataset.host === v); if (await call('system', {id:v, hosts:inp ? inp.value : ''})) CFG.dirty = true; }
+    else if (c === 'add'){ if (CFG.pre && await call('add', {path:CFG.pre.path})){ CFG.view = 'main'; CFG.pre = null; CFG.dirty = false; await startJob('sync'); } }
+    else if (c === 'add-more'){      // 분석은 미루고 폴더를 이어서 넣는다. 방금 넣은 폴더의 윗폴더로 돌아가 다음 것을 고르기 쉽게 한다
+      const r = CFG.pre && await call('add', {path:CFG.pre.path});
+      if (r){ CFG.pre = null; CFG.dirty = true; CFG.msg = `${r.source} 을(를) 추가했습니다. 폴더를 더 넣거나 다시 분석하세요.`; const up = await call('ls', {path:r.path, parent:true}); if (up) CFG.ls = up; }
+    }
+    else if (c === 'remove'){ if (armed !== 'src:' + v) CFG.confirm = 'src:' + v; else if (await call('remove', {source:v})) CFG.dirty = true; }
+    else if (c === 'sys-save'){
+      const nm = [...document.querySelectorAll('#cfg input[data-sysname]')].find(x => x.dataset.sysname === v), hs = [...document.querySelectorAll('#cfg input[data-host]')].find(x => x.dataset.host === v);
+      const body = {id:v, name:nm ? nm.value.trim() : ''}; if (hs) body.hosts = hs.value;
+      if (await call('system', body)) CFG.dirty = true;
+    }
     else if (c === 'ext-from'){ CFG.ext = {hosts:v}; }
     else if (c === 'ext-add'){ const x = {name:val('x-name'), hosts:val('x-hosts'), paths:val('x-paths'), clients:val('x-clients')}; if (await call('external', x)){ CFG.ext = null; CFG.dirty = true; } else CFG.ext = x; }
-    else if (c === 'ext-remove'){ if (await call('external', {remove:v})) CFG.dirty = true; }
+    else if (c === 'ext-remove'){ if (armed !== 'ext:' + v) CFG.confirm = 'ext:' + v; else if (await call('external', {remove:v})) CFG.dirty = true; }
     else if (c === 'link'){ if (await call('link', {from:t.dataset.from, to:t.dataset.to, mode:'calls'})) CFG.dirty = true; }
     else if (c === 'link-clear'){ if (await call('link', {from:t.dataset.from, to:t.dataset.to, mode:'drop'})) CFG.dirty = true; }
     else if (c === 'sync'){ CFG.dirty = false; await startJob('sync'); }
     else if (c === 'ingest'){ await startJob('ingest', {path:val('log-path')}); }
+    if (CFG.ls) lastDir(CFG.ls.path);
     const keep = CFG.err; await refreshState(); CFG.err = keep; renderConfig();
     if (c === 'ext-from'){ const n = $('#x-name'); if (n) n.focus(); }
   });
@@ -1778,7 +1812,7 @@ function bindInput(){
     if (ptrs.has(e.pointerId)) ptrs.set(e.pointerId, {x:e.clientX, y:e.clientY});
     if (sdrag && ptrs.size === 1){        // 배치 편집: 시스템 상자를 100 단위 눈금에 맞춰 옮긴다
       const nx = Math.round((sdrag.ox + (e.clientX-sdrag.x)/cam.z)/100)*100, ny = Math.round((sdrag.oy + (e.clientY-sdrag.y)/cam.z)/100)*100;
-      if (nx !== sdrag.s.x || ny !== sdrag.s.y){ sdrag.s.x = nx; sdrag.s.y = ny; sdrag.s.moved = true; moveSys(sdrag.s); }
+      if (nx !== sdrag.s.x || ny !== sdrag.s.y){ sdrag.s.x = nx; sdrag.s.y = ny; moveSys(sdrag.s); }
       return;
     }
     if (pinch && ptrs.size === 2){
@@ -1972,7 +2006,7 @@ let lastHud = 0;
 function updateHud(now){
   if (now - lastHud < 120) return; lastHud = now;
   const lv = levelOf(cam.z);
-  document.querySelectorAll('#level button').forEach((b,i) => b.classList.toggle('on', i === lv));
+  document.querySelectorAll('#level button').forEach((b,i) => b.classList.toggle('on', b.dataset.lv != null ? i === lv : state.nav && !$('#trace').hidden && !(state.trace || state.hits || state.impact)));
   const p = pick(W/2, H/2), where = p ? `${p.s.name}${p.m ? ' › ' + p.m.name : ''}` : '빈 공간';
   $('#status').innerHTML = `<b>${esc(where)}</b><br>축척 1:${cam.z >= 1 ? (1/cam.z).toFixed(2) : Math.round(1/cam.z)} · 화면 안 유닛 ${vis.length.toLocaleString()} · 그리기 ${drawMs.toFixed(1)}ms${frameMs ? ' · 프레임 ' + frameMs.toFixed(1) + 'ms' : ''}<br>${SCALE > 1 ? `가상 복제 ×${SCALE} · 유닛 ${UNITS.length.toLocaleString()}개 · 연결 ${EDGES.length.toLocaleString()}개 · 준비 ${Math.round(loadMs)}ms<br>` : ''}<span class="hint">드래그 이동 · 휠·핀치 확대 · 클릭 설명 · 방향키 따라가기 · / 검색 · 0 전체</span>`;
 }
@@ -2019,6 +2053,7 @@ function load(K){
   $('#stats').innerHTML = `<b>${SYSL.length}</b> SYSTEMS · <b>${MODS.length.toLocaleString()}</b> MODULES · <b>${UNITS.length.toLocaleString()}</b> UNITS<br><b>${nm.toLocaleString()}</b> METHODS · <b>${EDGES.length.toLocaleString()}</b> EDGES${K > 1 ? ' · 가상 복제 ×' + K : ''}${(META.sources || []).length ? `<br>기준 ${META.sources.map(x => esc(x.name) + (x.commit ? ' ' + esc(x.branch) + '@' + esc(x.commit) + (x.dirty ? '+수정' : '') : '')).join(' · ')} · ${esc(META.analyzed || '')}` : ''}<span id="manline"></span>`;
   renderManifest(); applyRuntime(RT_RAW); renderWalk();
   document.querySelectorAll('#scale button').forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.scale === K)));
+  if (needPin && UNITS.length) savePositions(true);       // 새로 놓인 시스템의 자리를 기억해 둔다
   loadMs = performance.now() - t0; frameMs = 0; invalidate();
 }
 async function boot(){
